@@ -118,3 +118,53 @@ cd ~/qzss/qzss-pi-package
 `raspi-config` で自動ログインを有効にした上で `.bashrc` の末尾に
 `start_pi_local.sh` の呼び出しを追記する方法がある。
 展示直前に実機で動作確認できてから設定するのが安全。
+
+## 8. リモート更新(OTA)を有効にする
+
+重大なバグが見つかった時、ラズパイの実機を操作しなくても最新版を
+反映できるようにする仕組み。組み込み機器と同じ「pull型」(ラズパイ側が
+定期的にGitHubへ確認しに行く)にしているため、ラズパイ側でポートを
+開けたりSSHを外部公開したりする必要は一切ない。
+
+- **通常**: 毎晩3時ごろに1回、GitHub(qzss-map / qzss-pi-package)に
+  新しいコミットが無いか確認し、あれば自動で取得・依存関係更新・
+  サービス再起動まで行う
+- **緊急時**: `qzss_pi_package/URGENT_UPDATE` というファイルの中身を
+  書き換えてcommit・pushすると、最短15分以内にラズパイが気づいて
+  夜を待たずにすぐ更新する
+- **安全装置**: 更新後にアプリが正常に応答しなければ、自動的に直前の
+  コミットへロールバックする(壊れた更新を適用したまま放置しない)
+
+### セットアップ(初回のみ、実機で)
+
+```bash
+cd ~/qzss/qzss-pi-package
+cp qzss.env.example qzss.env
+nano qzss.env   # シリアルポート・送信先URL等を記入
+./install_services.sh
+```
+
+これでサービス化(自動起動・クラッシュ時の自動再起動)と、
+OTA更新の定期実行(毎晩 + 緊急時15分おきチェック)が有効になる。
+
+### 緊急時の更新手順(開発側)
+
+```bash
+# qzss-pi-package リポジトリ内で
+echo "最終更新: $(date '+%Y-%m-%d %H:%M') <修正内容の概要>" >> URGENT_UPDATE
+git add URGENT_UPDATE
+git commit -m "緊急更新の合図"
+git push
+```
+
+最短15分以内にラズパイ側が気づいて更新される。
+`update_state/update_check.log` に更新履歴・ロールバック履歴が残る。
+
+### 状態確認
+
+```bash
+systemctl status qzss-map@$(whoami)
+systemctl status qzss-decoder@$(whoami)
+systemctl list-timers | grep qzss
+tail -f ~/qzss/qzss-pi-package/update_state/update_check.log
+```

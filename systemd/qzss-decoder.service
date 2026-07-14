@@ -1,0 +1,18 @@
+[Unit]
+Description=QZSS 受信機デコーダ(read_legacy_dual.py)
+After=network.target qzss-map.service
+Wants=qzss-map.service
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/qzss/qzss-pi-package
+# シリアルポート・送信先URL等は /home/%i/qzss/qzss-pi-package/qzss.env に書く
+# (このファイル自体はgit管理しない。環境ごとに内容が違うため)
+EnvironmentFile=/home/%i/qzss/qzss-pi-package/qzss.env
+ExecStart=/home/%i/qzss/qzss-pi-package/venv/bin/python3 read_legacy_dual.py ${QZSS_SERIAL_PORT} ${QZSS_BAUDRATE}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

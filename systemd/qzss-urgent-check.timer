@@ -1,0 +1,9 @@
+[Unit]
+Description=QZSS 緊急更新チェック(15分おき)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target

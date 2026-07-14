@@ -1,0 +1,8 @@
+[Unit]
+Description=QZSS 定期更新チェック(pull型OTA)
+
+[Service]
+Type=oneshot
+User=%i
+WorkingDirectory=/home/%i/qzss/qzss-pi-package
+ExecStart=/home/%i/qzss/qzss-pi-package/update_check.sh

@@ -1,0 +1,17 @@
+[Unit]
+Description=QZSS 統合防災地図アプリ(server.js)
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/qzss/qzss-map
+Environment=PORT=8080
+# ローカルkiosk表示ではトークン不要(ラズパイ内で完結するため)。
+# Web配信も兼ねる場合はここに INGEST_TOKEN=xxxx を追記する
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
