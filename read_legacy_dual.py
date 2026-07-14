@@ -148,6 +148,8 @@ class Sender:
         self.conn = cls(self.host, self.port, timeout=5)
 
     def send(self, payload_dict):
+        """送信を1回試みる。成功したらTrue、失敗したらFalseを返す
+        (例外を投げない。呼び出し側でキューへの再投入を判断するため)。"""
         data = json.dumps(payload_dict, ensure_ascii=False).encode("utf-8")
         headers = {"Content-Type": "application/json", "X-Api-Key": self.token}
         # 既存の接続が(サーバー側のタイムアウト等で)切れていることがあるため、
@@ -159,21 +161,43 @@ class Sender:
                 self.conn.request("POST", self.path, body=data, headers=headers)
                 resp = self.conn.getresponse()
                 resp.read()
-                return
+                return True
             except Exception as e:
                 if self.conn is not None:
                     self.conn.close()
                 self.conn = None
                 if attempt == 1:
                     print("⚠️ 送信に失敗しました:", self.host, e)
+        return False
+
+
+# 送信に失敗した通報は、ネットワークが一時的に不安定なだけの可能性が
+# あるため、少し待ってからキューに戻して再送する(自動リトライ)。
+# 災危通報(実際の警報)は取りこぼしたくないので複数回リトライするが、
+# ハートビートは30秒おきに次が来るので古い1件に固執する意味が薄く、
+# リトライ自体を行わない(キューが詰まって本来の通報の送信が遅れるのを防ぐ)。
+MAX_SEND_RETRIES = 5
+RETRY_BACKOFF_SEC = 3
 
 
 def _sender_worker_loop():
     sender = Sender(CLOUD_URL, TOKEN)
     while True:
-        payload = send_queue.get()
-        sender.send(payload)
+        payload, attempt, retryable = send_queue.get()
+        ok = sender.send(payload)
+        if not ok and retryable:
+            if attempt < MAX_SEND_RETRIES:
+                print(f"↻ 送信失敗、{RETRY_BACKOFF_SEC}秒後に再試行します"
+                      f"({attempt + 1}/{MAX_SEND_RETRIES}): {payload.get('type')}")
+                time.sleep(RETRY_BACKOFF_SEC)
+                send_queue.put((payload, attempt + 1, retryable))
+            else:
+                print(f"❌ 送信を諦めました(再試行回数上限): {payload.get('type')}")
         send_queue.task_done()
+
+
+def enqueue_send(payload, retryable=True):
+    send_queue.put((payload, 0, retryable))
 
 
 def route_report(params, category_key, is_test_data=False):
@@ -182,7 +206,7 @@ def route_report(params, category_key, is_test_data=False):
         params["is_test_data"] = True
 
     if category_key in ("jalert", "lalert") or category_key in ALLOWED_CATEGORY_NOS:
-        send_queue.put(params)
+        enqueue_send(params, retryable=True)
         print("🛰️ 地図へ送信キューに追加:", params.get("type"))
     else:
         print("(対象外カテゴリのため送信スキップ)")
@@ -197,7 +221,9 @@ def send_heartbeat_loop():
                 "satellite_id": last_satellite_seen["satellite_id"],
                 "satellite_prn": last_satellite_seen["satellite_prn"],
             }
-            send_queue.put(payload)
+            # ハートビートは30秒おきに次が来るので、古い1件のために
+            # リトライして詰まらせる必要はない(失敗したら諦めて次を待つ)
+            enqueue_send(payload, retryable=False)
         time.sleep(HEARTBEAT_INTERVAL_SEC)
 
 
