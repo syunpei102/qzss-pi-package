@@ -4,10 +4,11 @@
 # 地図アプリ(server.js)を起動し、同じラズパイ上のChromiumを
 # kioskモード(全画面・操作不可)でそこに向ける。
 #
-# 前提: このリポジトリ(qzss_pi_package)と、統合地図アプリのリポジトリ
-# (map)を同じ親ディレクトリに並べてcloneしておくこと:
-#   ~/qzss/qzss_pi_package/  (このリポジトリ)
-#   ~/qzss/map/              (地図アプリ。server.js・public/ を含む)
+# 前提: このリポジトリ(qzss-pi-package)と、統合地図アプリのリポジトリ
+# (qzss-map)を同じ親ディレクトリに並べてcloneしておくこと(GitHubの
+# リポジトリ名そのままでよい):
+#   ~/qzss/qzss-pi-package/  (このリポジトリ)
+#   ~/qzss/qzss-map/         (地図アプリ。server.js・public/ を含む)
 #
 # 使い方:
 #   ./start_pi_local.sh /dev/ttyUSB0 115200
@@ -23,7 +24,7 @@ cd "$DIR"
 PORT_ARG="$1"
 BAUDRATE="${2:-115200}"
 HTTP_PORT="${HTTP_PORT:-8080}"
-MAP_DIR="${MAP_DIR:-$DIR/../map}"
+MAP_DIR="${MAP_DIR:-$DIR/../qzss-map}"
 
 if [ -z "$PORT_ARG" ]; then
   echo "使い方: $0 <シリアルポート> [ボーレート]"
