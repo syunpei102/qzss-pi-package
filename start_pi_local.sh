@@ -11,6 +11,10 @@
 #
 # 使い方:
 #   ./start_pi_local.sh /dev/ttyUSB0 115200
+#
+# Pi 3等のGPUが非力な機種向けの事前準備(一度だけ手動で):
+#   sudo raspi-config → Performance Options → GPU Memory → 128以上に設定
+#   (GPUメモリが少ないとWebGL描画がソフトウェアフォールバックし著しく重くなる)
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -62,6 +66,11 @@ done
 
 echo "🖥️  Chromiumをkioskモードで起動します"
 CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chromium-browser)"
+# Pi 3等のGPUが非力な機種向けに、WebGL(MapLibre GL JS)がなるべく
+# ハードウェアアクセラレーションで動くように明示的にフラグを付ける。
+# --use-gl=egl: ソフトウェアフォールバックを避け、VideoCoreのEGL経由で描画
+# --enable-zero-copy / --enable-gpu-rasterization: GPUラスタライズを有効化
+# --disable-smooth-scrolling: 慣性スクロール等の余計な演出を削って軽くする
 "$CHROMIUM_BIN" \
   --kiosk \
   --incognito \
@@ -70,6 +79,10 @@ CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chrom
   --disable-session-crashed-bubble \
   --disable-restore-session-state \
   --check-for-update-interval=31536000 \
+  --use-gl=egl \
+  --enable-gpu-rasterization \
+  --enable-zero-copy \
+  --disable-smooth-scrolling \
   "http://localhost:${HTTP_PORT}" &
 CHROMIUM_PID=$!
 trap 'kill "$MAP_PID" "$CHROMIUM_PID" 2>/dev/null' EXIT
