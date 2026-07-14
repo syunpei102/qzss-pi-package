@@ -1,19 +1,19 @@
 """
-1つの受信機(1本のアンテナ、1つのシリアルポート)から、
-重要な通報(緊急地震速報・震源・震度速報・津波・Jアラート)はメインの
-地図サービスへ、注意情報(台風・気象警報・海上警報など)は注意情報
-マップサービスへ、それぞれ振り分けて送信する統合版スクリプト。
+1つの受信機(1本のアンテナ、1つのシリアルポート)から受信・デコードした
+災危通報(地震・津波・Jアラート・Lアラート・気象警報など)を、1つに
+統合された地図サービス(重要地図+注意情報を1画面に表示する版)へ送信する。
 
-シリアルポートは同時に1つのプロセスしか使えないため、2つの
-read_legacy.pyを同時に起動することはできない。その代わりこのスクリプトが
-1回の受信・デコードで、内容に応じて送信先を振り分ける。
+以前は「重要情報」「注意情報」を別々のCloud Runサービスに振り分けて
+いたが、地図側を1つのアプリ・1つのパネルに統合したため、送信先も
+1つのURL/トークンに統一した。
 
 使い方:
-  QZSS_CLOUD_URL_CRITICAL=https://xxxx.a.run.app/ingest \
-  QZSS_INGEST_TOKEN_CRITICAL=xxxxxxxx \
-  QZSS_CLOUD_URL_CAUTION=https://yyyy.a.run.app/ingest \
-  QZSS_INGEST_TOKEN_CAUTION=yyyyyyyy \
+  QZSS_CLOUD_URL=https://xxxx.a.run.app/ingest \
+  QZSS_INGEST_TOKEN=xxxxxxxx \
   python3 read_legacy_dual.py <シリアルポート> <ボーレート>
+
+  ローカル(ラズパイ上のkiosk表示)向けにはCloud Runの代わりに
+  http://localhost:8080/ingest のようなURLを指定すればよい。
 """
 import argparse
 import base64
@@ -32,13 +32,11 @@ from functools import reduce
 import azarashi
 import serial
 
-CRITICAL_CATEGORY_NOS = {1, 2, 3, 5}
-# 海上警報(14)・北西太平洋津波(6)は地図描画できる地域データが無いため対象外
-CAUTION_CATEGORY_NOS = {
-    4, 8, 9, 10, 11,
-    # 12,  # 台風: 消滅時に取消(取り下げ)信号が無く、表示が消えないまま残り続ける
-    #       問題があるため一時的に無効化(サーバへ送らない)。再度有効にする場合はコメントを外す。
-}
+# 地震・津波・南海トラフ・火山・降灰・気象警報・洪水を送信する。
+# 海上警報(14)・北西太平洋津波(6)は地図描画できる地域データが無いため対象外。
+# 台風(12)は消滅時に取消(取り下げ)信号が無く、表示が消えないまま残り続ける
+# 問題があるため対象外(再度有効にする場合は12を追加する)。
+ALLOWED_CATEGORY_NOS = {1, 2, 3, 4, 5, 8, 9, 10, 11}
 
 # JMAの災危通報は同一内容が配信終了条件を満たすまで数秒おきに再送され続ける仕様の
 # ため(同じ通報がそのまま繰り返し届く)、直近に送信済みの内容と完全一致する場合は
@@ -49,10 +47,8 @@ CAUTION_CATEGORY_NOS = {
 RECENT_CONTENT_HISTORY_SIZE = 50
 recent_content_keys = deque(maxlen=RECENT_CONTENT_HISTORY_SIZE)
 
-CLOUD_URL_CRITICAL = os.environ.get("QZSS_CLOUD_URL_CRITICAL", "").strip()
-TOKEN_CRITICAL = os.environ.get("QZSS_INGEST_TOKEN_CRITICAL", "").strip()
-CLOUD_URL_CAUTION = os.environ.get("QZSS_CLOUD_URL_CAUTION", "").strip()
-TOKEN_CAUTION = os.environ.get("QZSS_INGEST_TOKEN_CAUTION", "").strip()
+CLOUD_URL = os.environ.get("QZSS_CLOUD_URL", "").strip()
+TOKEN = os.environ.get("QZSS_INGEST_TOKEN", "").strip()
 
 HEARTBEAT_INTERVAL_SEC = 30
 serial_ok = threading.Event()
@@ -135,12 +131,9 @@ def route_report(params, category_key, is_test_data=False):
         params = dict(params)
         params["is_test_data"] = True
 
-    if category_key == "jalert" or category_key in CRITICAL_CATEGORY_NOS:
-        send_to(CLOUD_URL_CRITICAL, TOKEN_CRITICAL, params)
-        print("🛰️ [重要] メイン地図へ送信:", params.get("type"))
-    elif category_key == "lalert" or category_key in CAUTION_CATEGORY_NOS:
-        send_to(CLOUD_URL_CAUTION, TOKEN_CAUTION, params)
-        print("ℹ️  [注意情報] 注意情報マップへ送信:", params.get("type"))
+    if category_key in ("jalert", "lalert") or category_key in ALLOWED_CATEGORY_NOS:
+        send_to(CLOUD_URL, TOKEN, params)
+        print("🛰️ 地図へ送信:", params.get("type"))
     else:
         print("(対象外カテゴリのため送信スキップ)")
 
@@ -154,8 +147,7 @@ def send_heartbeat_loop():
                 "satellite_id": last_satellite_seen["satellite_id"],
                 "satellite_prn": last_satellite_seen["satellite_prn"],
             }
-            send_to(CLOUD_URL_CRITICAL, TOKEN_CRITICAL, payload)
-            send_to(CLOUD_URL_CAUTION, TOKEN_CAUTION, payload)
+            send_to(CLOUD_URL, TOKEN, payload)
         time.sleep(HEARTBEAT_INTERVAL_SEC)
 
 
@@ -315,14 +307,14 @@ def ubx2qzqsm(line):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='QZSS受信機からのデータを重要/注意情報に振り分けて送信する')
+    parser = argparse.ArgumentParser(description='QZSS受信機からのデータをデコードして統合地図サービスへ送信する')
     parser.add_argument('port', help='serial port. ex: /dev/tty.usbserial-XXXX')
     parser.add_argument('baudrate', help='baudrate. ex: 9600')
     parser.add_argument('-n', '--nmea', help='print other standard NMEA sentence', action='store_true')
     args = parser.parse_args()
 
-    if not CLOUD_URL_CRITICAL and not CLOUD_URL_CAUTION:
-        print("❌ QZSS_CLOUD_URL_CRITICAL / QZSS_CLOUD_URL_CAUTION のどちらも未設定です。少なくとも一方を設定してください。")
+    if not CLOUD_URL:
+        print("❌ QZSS_CLOUD_URL が未設定です。送信先(Cloud RunのURL、またはローカルのhttp://localhost:PORT/ingest)を設定してください。")
         raise SystemExit(1)
 
     threading.Thread(target=send_heartbeat_loop, daemon=True).start()
