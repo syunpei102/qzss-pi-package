@@ -1,0 +1,8 @@
+[Unit]
+Description=QZSS 状態報告(温度・稼働時間・リモートコマンド受信)
+
+[Service]
+Type=oneshot
+User=%i
+WorkingDirectory=/home/%i/qzss/qzss-pi-package
+ExecStart=/home/%i/qzss/qzss-pi-package/report_status.sh

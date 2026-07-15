@@ -168,3 +168,53 @@ systemctl status qzss-decoder@$(whoami)
 systemctl list-timers | grep qzss
 tail -f ~/qzss/qzss-pi-package/update_state/update_check.log
 ```
+
+## 9. デバイス管理ダッシュボードと温度監視
+
+`./install_services.sh` を実行すると、上記のOTA更新に加えて
+`qzss-report-status.timer` も有効になる。これは1時間おきに
+`report_status.sh` を実行し、以下を行う:
+
+- 本体温度・稼働時間・ディスク空き容量・現在のgitコミットを
+  Cloud Run(管理サイト)へ報告する
+- 温度が閾値(既定: 警告70℃・危険80℃。`qzss.env` の
+  `TEMP_WARN` / `TEMP_CRITICAL` で変更可)を超えたらDiscordへ通知する
+  (要 [DISCORD_SETUP.md](./DISCORD_SETUP.md) の設定)
+- 管理サイトから予約された「再起動」「更新確認」コマンドがあれば
+  その場で実行する(ラズパイ側は着信を受け付けない設計のため、
+  この定期報告のついでにコマンドを受け取る)
+- `qzss-map` / `qzss-decoder` サービスが何らかの理由で停止していたら
+  自動的に再起動を試みる(保険。通常はsystemdの
+  `Restart=on-failure` + `StartLimitIntervalSec=0` により、
+  クラッシュを繰り返しても上限なく自動復帰する)
+
+### 管理サイト(デバイス管理ダッシュボード)
+
+Cloud Run上の `https://<デプロイ先>/device-admin` にアクセスすると、
+登録済みラズパイ一覧・温度・稼働時間・オンライン状態が確認でき、
+「再起動を予約」「更新確認を予約」ボタンから遠隔操作できる。
+ログインには `ADMIN_TOKEN` (サーバー側の環境変数として設定する秘密の
+トークン)が必要。デプロイ担当者に確認するか、
+`openssl rand -hex 32` などで新規発行して
+Cloud Runの環境変数 `ADMIN_TOKEN` に設定する。
+
+なお「表示地域の設定」(旧 `admin.html`)へのリンクは、この管理サイト
+内(ログイン後の画面)からのみ辿れるようにしてあり、地図表示側の
+画面には管理者向けの導線は置いていない。
+
+### 応用: ハードウェアウォッチドッグ(任意・上級者向け)
+
+OSやカーネルごとフリーズしてしまうような重大な障害(ソフトウェア側の
+自動再起動では復旧できないケース)まで自動復旧させたい場合は、
+Raspberry Pi OS標準のハードウェアウォッチドッグを有効にできる:
+
+```bash
+# /boot/firmware/config.txt (または /boot/config.txt) に追記
+dtparam=watchdog=on
+sudo reboot
+```
+
+有効化後、`qzss-map.service` に `WatchdogSec=30` と `Type=notify`
+相当の生存通知が必要になるため、アプリ側の対応が別途必要。
+現状は導入していない(検証環境のない変更を安全のため見送っている)。
+必要になった場合は相談してほしい。

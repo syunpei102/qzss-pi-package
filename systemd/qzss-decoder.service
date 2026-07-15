@@ -13,6 +13,9 @@ EnvironmentFile=/home/%i/qzss/qzss-pi-package/qzss.env
 ExecStart=/home/%i/qzss/qzss-pi-package/venv/bin/python3 read_legacy_dual.py ${QZSS_SERIAL_PORT} ${QZSS_BAUDRATE}
 Restart=on-failure
 RestartSec=5
+# クラッシュを繰り返しても再起動を止めない(既定では短時間に5回落ちると
+# systemdが諦めて「failed」のまま放置してしまうため、上限を外す)
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target

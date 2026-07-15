@@ -1,0 +1,9 @@
+[Unit]
+Description=QZSS 状態報告(1時間おき)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target

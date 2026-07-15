@@ -28,7 +28,7 @@ for f in "$DIR"/systemd/qzss-map.service "$DIR"/systemd/qzss-decoder.service; do
   name="$(basename "$f" .service)"
   sudo cp "$f" "/etc/systemd/system/${name}@.service"
 done
-for f in "$DIR"/systemd/qzss-update-check.service "$DIR"/systemd/qzss-urgent-check.service; do
+for f in "$DIR"/systemd/qzss-update-check.service "$DIR"/systemd/qzss-urgent-check.service "$DIR"/systemd/qzss-report-status.service; do
   name="$(basename "$f")"
   sed "s/%i/$USER_NAME/g" "$f" | sudo tee "/etc/systemd/system/$name" > /dev/null
 done
@@ -36,8 +36,8 @@ for f in "$DIR"/systemd/*.timer; do
   sudo cp "$f" "/etc/systemd/system/$(basename "$f")"
 done
 
-echo "🔑 更新スクリプトがsudo無しでサービス再起動できるようにします"
-SUDOERS_LINE="$USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qzss-map@$USER_NAME, /usr/bin/systemctl restart qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-map@$USER_NAME qzss-decoder@$USER_NAME"
+echo "🔑 更新スクリプトがsudo無しでサービス再起動・本体再起動できるようにします"
+SUDOERS_LINE="$USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qzss-map@$USER_NAME, /usr/bin/systemctl restart qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-map@$USER_NAME qzss-decoder@$USER_NAME, /usr/bin/systemctl reboot"
 echo "$SUDOERS_LINE" | sudo tee "/etc/sudoers.d/qzss-update" > /dev/null
 sudo chmod 440 /etc/sudoers.d/qzss-update
 sudo visudo -c -f /etc/sudoers.d/qzss-update
@@ -53,9 +53,13 @@ echo "⏰ 更新チェックのタイマーを有効化します(毎晩3時 + �
 sudo systemctl enable --now "qzss-update-check.timer"
 sudo systemctl enable --now "qzss-urgent-check.timer"
 
+echo "📡 状態報告タイマーを有効化します(5分おき。温度・リモートコマンド受信)"
+sudo systemctl enable --now "qzss-report-status.timer"
+
 echo ""
 echo "✅ セットアップ完了。状態確認コマンド:"
 echo "   systemctl status qzss-map@$USER_NAME"
 echo "   systemctl status qzss-decoder@$USER_NAME"
 echo "   systemctl list-timers | grep qzss"
 echo "   tail -f $DIR/update_state/update_check.log"
+echo "   tail -f $DIR/update_state/report_status.log"
