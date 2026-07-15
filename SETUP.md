@@ -177,42 +177,39 @@ tail -f ~/qzss/qzss-pi-package/update_state/update_check.log
 `qzss-report-status.timer` も有効になる。これは1時間おきに
 `report_status.sh` を実行し、以下を行う:
 
-- 本体温度・稼働時間・ディスク空き容量・現在のgitコミットを
-  Cloud Run(管理サイト)へ報告する
+- 本体温度・稼働時間・ディスク空き容量・現在のgitコミットをCloud Run
+  (`qzss-map`)へ報告する
 - 温度が閾値(既定: 警告70℃・危険80℃。`qzss.env` の
   `TEMP_WARN` / `TEMP_CRITICAL` で変更可)を超えたらDiscordへ通知する
-  (要 [DISCORD_SETUP.md](./DISCORD_SETUP.md) の設定)
-- 管理サイトから予約された「再起動」「更新確認」コマンドがあれば
+- Discordのスラッシュコマンドで予約された「再起動」「更新確認」があれば
   その場で実行する(ラズパイ側は着信を受け付けない設計のため、
-  この定期報告のついでにコマンドを受け取る)
+  この定期報告のついでにコマンドを受け取る)。実行結果(再起動が
+  実際に完了したか等)もDiscordへ通知する
 - `qzss-map` / `qzss-decoder` サービスが何らかの理由で停止していたら
   自動的に再起動を試みる(保険。通常はsystemdの
   `Restart=on-failure` + `StartLimitIntervalSec=0` により、
   クラッシュを繰り返しても上限なく自動復帰する)
 
-### 管理サイト(デバイス管理ダッシュボード)
+### Discordからの操作(再起動・更新確認・拠点の地域設定)
 
-Cloud Run上の `https://eq.shum10.com/device-admin` にアクセスすると、
-登録済みラズパイ一覧・温度・稼働時間・オンライン状態が確認でき、
-「再起動を予約」「更新確認を予約」ボタンから遠隔操作できる。
+以前はWeb管理画面(`/device-admin`)から操作していたが、現在はDiscordの
+スラッシュコマンドに一本化されている。`/reboot device:<拠点ID>`・
+`/update_check device:<拠点ID>`・`/set_region device:<拠点ID>
+prefecture:<都道府県名>` が使える。Bot自体のセットアップ手順は
+[DISCORD_SETUP.md](./DISCORD_SETUP.md) の「4. Discord Botを作る」を参照。
 
-ログインはメールアドレス+パスワード(サーバー側の環境変数
-`ADMIN_EMAIL` / `ADMIN_PASSWORD_HASH` / `SESSION_SECRET` で設定)。
-運用者本人以外はログインできない想定で、複数アカウントには対応していない。
-パスワードのハッシュ値は `qzss-map` リポジトリの
-`node hash_admin_password.js 'パスワード'` で生成し、
-`gcloud run deploy qzss-map --update-env-vars ADMIN_PASSWORD_HASH=...`
-で反映する(平文パスワードはどこにも保存しない)。
+拠点に「対象地域」(都道府県)を割り当てると、その拠点向けの地図表示
+(`https://eq.shum10.com/?device=<拠点ID>` のようにURLに`?device=`
+パラメータを付けて開いた画面)が、その都道府県+周辺地方(例: 東京→関東)
+だけにズーム固定され、対象地域外の通報はラズパイ側でもそれ以上処理
+されなくなる(サイネージ設置先ごとに地元の情報だけを表示したい場合に
+使う。`?device=`を付けずに開いた一般公開ビューは今まで通り全国対象の
+まま)。`?device=`・Discordコマンドの`device`に指定する拠点IDは、
+ラズパイの`qzss.env`の`QZSS_DEVICE_ID`(未設定ならhostname)と一致させる。
 
-各拠点(ラズパイ)ごとに「対象地域」(都道府県)を割り当てられる。
-割り当てると、その拠点向けの地図表示(`https://eq.shum10.com/?device=<拠点ID>`
-のようにURLに`?device=`パラメータを付けて開いた画面)が、その都道府県+
-周辺地方(例: 東京→関東)だけにズーム固定され、対象地域外の通報は
-ラズパイ側でもそれ以上処理されなくなる(サイネージ設置先ごとに
-地元の情報だけを表示したい場合に使う。`?device=`を付けずに開いた
-一般公開ビューは今まで通り全国対象のまま)。`?device=`に指定する
-拠点IDは、ラズパイの`qzss.env`の`QZSS_DEVICE_ID`(未設定なら
-hostname)と一致させる。
+Web管理画面(`/device-admin`)のコードは残っているが、Cloud Run本番では
+既定で無効(`qzss-map`リポジトリの`server.js`、環境変数
+`ENABLE_WEB_ADMIN`が未設定だと該当ルート自体が登録されない)。
 
 ### 応用: ハードウェアウォッチドッグ(任意・上級者向け)
 

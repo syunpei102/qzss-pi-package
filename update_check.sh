@@ -41,10 +41,9 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
 }
 
-# 更新失敗・ロールバック等の重大なイベントだけDiscordに通知する
-# (通常の「更新なし」「正常に更新できた」は通知せず、ログにだけ残す。
-# 毎晩のログを人間が見に行かなくても、問題が起きた時だけ気づけるように
-# するための仕組みなので、鳴らしすぎて無視されるようになると意味が無い)
+# 更新の成功・失敗・ロールバック等をDiscordに通知する(Discordが
+# デバイス操作・状態確認の主な窓口になったため、更新が無かった場合を
+# 除き結果は毎回通知する)
 notify_discord() {
   local message="$1"
   [ -z "${DISCORD_WEBHOOK_URL:-}" ] && return 0
@@ -170,6 +169,17 @@ restart_services
 log "⏳ 起動確認中…"
 if health_check; then
   log "✅ 更新を適用し、正常に起動していることを確認しました"
+  success_summary=""
+  for repo_dir in "$MAP_DIR" "$PI_DIR"; do
+    repo_name="$(basename "$repo_dir")"
+    prev_file="$STATE_DIR/$repo_name.prev"
+    if [ -f "$prev_file" ]; then
+      prev_rev="$(cat "$prev_file")"
+      new_rev="$(cd "$repo_dir" && git rev-parse --short HEAD)"
+      success_summary="${success_summary}"$'\n'"${repo_name}: ${prev_rev:0:7} → ${new_rev}"
+    fi
+  done
+  notify_discord "✅ 更新を適用しました。${success_summary}"
   exit 0
 fi
 

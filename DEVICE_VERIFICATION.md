@@ -1,9 +1,10 @@
-# デバイス管理ダッシュボード 実機動作確認チェックリスト
+# デバイス管理(Discord操作) 実機動作確認チェックリスト
 
-`report_status.sh`・デバイス管理ダッシュボード(`/device-admin`)は、これ
-まで構文チェックとローカルcurlでの疎通確認のみで、物理ラズパイでの
+`report_status.sh`・Discordスラッシュコマンドからの操作は、これまで
+構文チェックとローカルcurlでの疎通確認のみで、物理ラズパイでの
 エンドツーエンド動作確認がまだ済んでいない。実機投入時に以下を上から
-順に確認する。
+順に確認する。(Web管理画面`/device-admin`は本番では無効化済みのため、
+このチェックリストはDiscord経由の操作を確認する内容になっている)
 
 ## 0. 前提
 
@@ -42,22 +43,18 @@ journalctl -u qzss-report-status.service -n 50 --no-pager
 `report_status.sh` の `log()` 出力(`[日時] ...`)がエラー無く一通り出て
 いることを確認する。
 
-## 3. デバイス管理ダッシュボードに反映されるか
+## 3. `curl https://eq.shum10.com/device-region/<拠点ID>` で状態が見えるか
 
-`https://eq.shum10.com/device-admin` を開いてログインし、数分以内に
-そのデバイスのカードが表示されることを確認する。以下の値が実機の値と
-一致しているか:
+Web管理画面が無効化されているため、まずはこのエンドポイント(認証不要)
+で、そのデバイスに何か地域設定があるか確認できる。デバイスの温度等の
+生データはこのセッションでは公開APIから見えないため、次項のDiscord
+コマンドの応答メッセージや`journalctl`のログで実機の値を確認する。
 
-- 本体温度(`vcgencmd measure_temp` の値と近いか)
-- 稼働時間
-- ディスク空き
-- `qzss-map` / `qzss-pi-package` のgitコミット(直近pull後のコミットに
-  なっているか)
-- オンライン状態(🟢オンライン表示になっているか)
+## 4. Discordの `/reboot` コマンドの往復確認
 
-## 4. 「再起動を予約」の往復確認
-
-1. ダッシュボードでそのデバイスの「再起動を予約」を押す
+1. Discordで `/reboot device:<拠点ID>` を実行し、autocomplete候補に
+   実際のデバイスIDが出ること・実行後にephemeralな確認メッセージ
+   (「✅ ... に再起動を予約しました」)が返ることを確認する
 2. 実機側で次回の `qzss-report-status.service` 実行(タイマー待ち、また
    は手動で `sudo systemctl start qzss-report-status.service`)を待つ
 3. `journalctl -u qzss-report-status.service -n 50` に再起動コマンドを
@@ -65,13 +62,22 @@ journalctl -u qzss-report-status.service -n 50 --no-pager
 4. 実際に実機が再起動されるか(`uptime` がリセットされるか)
 5. 再起動後、`qzss-map.service` / `qzss-decoder.service` が自動的に
    立ち上がっているか(`systemctl status`)
+6. 再起動完了後の次回`report_status.sh`実行で、Discordに
+   「✅ 再起動が完了しました」の通知が届くか(`report_status.sh`の
+   `reboot_requested`マーカー検知ロジック)
 
-## 5. 「更新確認を予約」の往復確認
+## 5. Discordの `/update_check` と `/set_region` の往復確認
 
-1. ダッシュボードで「更新確認を予約」を押す
+1. `/update_check device:<拠点ID>` を実行し、ephemeralな確認メッセージ
+   が返ることを確認する
 2. 次回の状態報告時に `force_update_check` が実行され、GitHubの新着
    コミットがあれば通常の `update_check.sh` と同様に取得・依存関係更新・
-   サービス再起動まで走ることを確認する
+   サービス再起動まで走ることを確認する。成功時にDiscordへ
+   「✅ 更新を適用しました」の通知が届くことも確認する
+3. `/set_region device:<拠点ID> prefecture:東京都` のように実行し、
+   `prefecture`のautocomplete候補に47都道府県が出ること・
+   `curl https://eq.shum10.com/device-region/<拠点ID>` で関東7都県分の
+   `prefectureIds`が返るようになることを確認する
 
 ## 6. クラッシュループ耐性の確認
 

@@ -76,6 +76,24 @@ TEMPERATURE="$(read_temperature)"
 UPTIME_SEC="$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo "")"
 DISK_FREE_PCT="$(df -P "$DIR" 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print 100-$5}')"
 
+# --- 直前に自分(report_status.sh)が予約した再起動が、実際に成功したか
+#     確認する(下のコマンド処理でreboot実行前にマーカーを作成する)。
+#     稼働時間が短ければ再起動が完了したとみなし、長ければ何らかの理由
+#     (sudo権限不足等)で再起動されていない可能性を通知する。
+#     停電等、こちらが予約していない再起動では通知しない(マーカーが
+#     無いため誤検知しない) ---
+REBOOT_MARKER="$STATE_DIR/reboot_requested"
+if [ -f "$REBOOT_MARKER" ]; then
+  if [ -n "$UPTIME_SEC" ] && [ "$UPTIME_SEC" -lt 600 ]; then
+    log "✅ 予約された再起動が完了しました(稼働時間: ${UPTIME_SEC}秒)"
+    notify_discord "✅ 再起動が完了しました(稼働時間: ${UPTIME_SEC}秒)。"
+  else
+    log "⚠️ 再起動を予約しましたが、まだ再起動されていない可能性があります(稼働時間: ${UPTIME_SEC:-不明}秒)"
+    notify_discord "⚠️ 再起動を予約しましたが、まだ再起動されていない可能性があります(稼働時間: ${UPTIME_SEC:-不明}秒)。手動での確認をお願いします。"
+  fi
+  rm -f "$REBOOT_MARKER"
+fi
+
 git_commit() {
   local repo_dir="$1"
   [ -d "$repo_dir/.git" ] || { echo ""; return; }
@@ -157,8 +175,9 @@ fi
 for cmd in $commands; do
   case "$cmd" in
     reboot)
-      log "🔄 管理サイトからの再起動コマンドを受信しました。10秒後に再起動します"
-      notify_discord "管理サイトからの指示により再起動します。"
+      log "🔄 再起動コマンドを受信しました。10秒後に再起動します"
+      notify_discord "再起動します(完了したら改めて通知します)。"
+      touch "$STATE_DIR/reboot_requested"
       ( sleep 10 && sudo /usr/bin/systemctl reboot ) &
       ;;
     force_update_check)
