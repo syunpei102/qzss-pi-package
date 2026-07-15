@@ -132,6 +132,74 @@ check_and_heal_service() {
 check_and_heal_service "qzss-map@${SERVICE_USER}.service"
 check_and_heal_service "qzss-decoder@${SERVICE_USER}.service"
 
+# --- qzss-mapが実際にHTTP応答するか確認する(上のcheck_and_heal_serviceは
+#     「systemdがactiveと言っているか」しか見ないため、プロセスは起動して
+#     いても中身が壊れていて応答しないケースを検知できない)。
+#     応答が無ければ、まず同じコードでの再起動を試み、それでも直らない
+#     場合は最後に動作確認できた安定版(last_known_good、update_check.shが
+#     更新成功時・本チェックの成功時に記録する)へ自動的に切り替える。
+#     OTA更新の直後だけでなく、それ以外の理由で壊れた場合にも効く保険 ---
+HTTP_PORT="${HTTP_PORT:-8080}"
+
+http_health_check() {
+  local tries=10
+  for i in $(seq 1 "$tries"); do
+    curl -fs "http://localhost:${HTTP_PORT}/" > /dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
+
+record_last_known_good() {
+  for repo_dir in "$MAP_DIR" "$PI_DIR"; do
+    local name
+    name="$(basename "$repo_dir")"
+    [ -d "$repo_dir/.git" ] || continue
+    (cd "$repo_dir" && git rev-parse HEAD) > "$STATE_DIR/$name.last_good" 2>/dev/null
+  done
+}
+
+rollback_to_last_known_good() {
+  local rolled_back_any=1
+  for repo_dir in "$MAP_DIR" "$PI_DIR"; do
+    local name good_file good_rev
+    name="$(basename "$repo_dir")"
+    good_file="$STATE_DIR/$name.last_good"
+    if [ ! -f "$good_file" ]; then
+      log "⚠️ $name の安定版記録が無いため切り替えられません"
+      rolled_back_any=0
+      continue
+    fi
+    good_rev="$(cat "$good_file")"
+    log "⏪ $name を最後に動作確認できた安定版 ${good_rev:0:7} へ切り替えます"
+    (cd "$repo_dir" && git reset --hard "$good_rev" --quiet) 2>&1 | tee -a "$LOG_FILE"
+  done
+  return $((1 - rolled_back_any))
+}
+
+if http_health_check; then
+  record_last_known_good
+else
+  log "⚠️ qzss-map がHTTP応答しません。再起動を試みます"
+  sudo systemctl restart "qzss-map@${SERVICE_USER}.service" "qzss-decoder@${SERVICE_USER}.service" 2>&1 | tee -a "$LOG_FILE"
+  if http_health_check; then
+    log "✅ 再起動で復旧しました"
+    record_last_known_good
+    notify_discord "⚠️ qzss-mapが応答しなかったため再起動しました。復旧しました。"
+  elif rollback_to_last_known_good; then
+    sudo systemctl restart "qzss-map@${SERVICE_USER}.service" "qzss-decoder@${SERVICE_USER}.service" 2>&1 | tee -a "$LOG_FILE"
+    if http_health_check; then
+      log "✅ 安定版への切り替えで復旧しました"
+      notify_discord "🚨 qzss-mapが応答しなかったため、最後に動作確認できた安定版へ自動的に切り替えて復旧しました。原因(直近の変更内容)を確認してください。"
+    else
+      log "🚨 安定版に切り替えても応答しません"
+      notify_discord "🚨 自動復旧に失敗しました(安定版への切り替え後も応答なし)。至急、実機の確認をお願いします。"
+    fi
+  else
+    notify_discord "🚨 qzss-mapが応答しませんが、安定版の記録が無く自動切り替えできません。至急、実機の確認をお願いします。"
+  fi
+fi
+
 # --- 送信先を決める(QZSS_CLOUD_URLの/ingestを/device/statusに置き換える) ---
 if [ -z "${QZSS_CLOUD_URL:-}" ]; then
   log "⚠️ QZSS_CLOUD_URL が未設定のため状態報告をスキップします"

@@ -94,6 +94,28 @@ sudo systemctl stop qzss-map.service
 - 復旧に成功した場合はDiscord通知が飛ばない(正常系なので静かなままで
   良い)ことも合わせて確認
 
+## 6.5 OTA以外のタイミングでの自動ロールバックの確認
+
+`report_status.sh`は、OTA更新の直後だけでなく**毎回の実行時にqzss-mapへ
+実際にHTTP応答があるか**を確認する。応答が無ければ再起動→それでも
+直らなければ最後に動作確認できた安定版(`update_state/qzss-map.last_good`)
+へ自動的に切り替える、という保険が入っている。以下で確認する:
+
+1. `cat update_state/qzss-map.last_good` で安定版のコミットが記録されて
+   いることを確認(通常運用で一度でも正常に動いていれば記録される)
+2. 意図的に`qzss-map`のコードを壊す(例: `~/qzss/qzss-map`で
+   `git commit --allow-empty -m test`してから、動かないコードに書き換えて
+   コミット、またはpackage.jsonを壊す等)
+3. `sudo systemctl restart qzss-map@$(whoami)`で反映させ、次回の
+   `report_status.sh`実行(または手動実行)を待つ
+4. ログ(`update_state/report_status.log`)に「HTTP応答しません」
+   →「再起動を試みます」→(直らなければ)「安定版へ切り替えます」の
+   流れが記録され、実際に`git log`のHEADが安定版のコミットに戻っている
+   ことを確認
+5. 復旧後、Discordに「🚨 ...安定版へ自動的に切り替えて復旧しました」の
+   通知が届くことを確認
+6. 確認後、壊したコミットは削除するか`git reset --hard`で元に戻しておく
+
 ## 7. ハードウェアウォッチドッグの確認
 
 ```bash

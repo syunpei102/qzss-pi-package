@@ -134,6 +134,18 @@ update_repo() {
   return 0
 }
 
+# 現在のコミットを「最後に動作確認できた安定版」として記録する。
+# report_status.sh側の自動ロールバック(OTA更新のタイミング以外で
+# 壊れた場合の保険)が、切り替え先としてこれを参照する
+record_last_known_good() {
+  for repo_dir in "$MAP_DIR" "$PI_DIR"; do
+    local name
+    name="$(basename "$repo_dir")"
+    [ -d "$repo_dir/.git" ] || continue
+    (cd "$repo_dir" && git rev-parse HEAD) > "$STATE_DIR/$name.last_good" 2>/dev/null
+  done
+}
+
 # 記録しておいた直前のコミットに戻す
 rollback_repo() {
   local repo_dir="$1"
@@ -180,6 +192,7 @@ if health_check; then
     fi
   done
   notify_discord "✅ 更新を適用しました。${success_summary}"
+  record_last_known_good
   exit 0
 fi
 
@@ -192,6 +205,7 @@ restart_services
 if health_check; then
   log "✅ ロールバック後、正常に起動していることを確認しました"
   notify_discord "ロールバックにより復旧しました。原因(新しいコミットの内容)を確認してください。\nログ: update_state/update_check.log"
+  record_last_known_good
 else
   log "🚨 ロールバック後も応答がありません。手動での確認が必要です"
   notify_discord "⚠️ ロールバックしても地図アプリが復旧しません。至急、実機の確認をお願いします。"
