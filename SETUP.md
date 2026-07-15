@@ -247,3 +247,11 @@ Web管理画面(`/device-admin`)のコードは残っているが、Cloud Run本
 ```bash
 wdctl   # Firmware Timeout が表示されれば有効
 ```
+
+**注意: これはウォッチドッグという1機能だけの初回有効化に必要な話であり、
+「常時稼働させたいプログラム」全般とは別**。`qzss-decoder`・
+`qzss-map`(ローカルkiosk版)・OTA/状態報告の3タイマーは、
+`install_services.sh`内で`systemctl enable --now`により**既に自動起動
+設定済み**なので、この先どんな理由(Discordの`/reboot`、ウォッチドッグに
+よる強制再起動、手動の`sudo reboot`)で再起動されても、`install_services.sh`
+を再実行しなくても自動的に立ち上がり直す。
