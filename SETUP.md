@@ -101,6 +101,17 @@ cd ~/qzss/qzss-pi-package
 
 終了する場合は `Ctrl+C`(地図アプリ・Chromiumも一緒に終了する)。
 
+**注意: ローカルkiosk版はDiscordコマンドの対象外。** `/reboot`・`/set_region`
+等のDiscordコマンドは、コマンド実行のたびにDiscordがCloud Run
+(`qzss-map`)上のサーバーへ直接POSTする仕組みなので、この構成
+(ラズパイ自身がserver.jsをローカルで動かしているだけ)には届かない。
+そもそもローカルkiosk版は1台のラズパイ=1つの表示先なので「拠点ごとの
+地域設定」を使う場面自体が少ないはずだが、必要であれば
+`ENABLE_WEB_ADMIN=true`でこのローカルのserver.jsのWeb管理画面を
+一時的に有効化し、そこから設定できる(設定値は`LOCAL_STATE_ONLY=true`
+により`qzss-map/.local_state/`のローカルファイルに保存され、ラズパイの
+再起動を挟んでも消えない)。
+
 ## 6. 起動確認のポイント
 
 - `./start_pi_local.sh` 実行後、地図アプリの起動待ちで固まって見える場合は
@@ -211,19 +222,28 @@ Web管理画面(`/device-admin`)のコードは残っているが、Cloud Run本
 既定で無効(`qzss-map`リポジトリの`server.js`、環境変数
 `ENABLE_WEB_ADMIN`が未設定だと該当ルート自体が登録されない)。
 
-### 応用: ハードウェアウォッチドッグ(任意・上級者向け)
+### ハードウェアウォッチドッグ(OSごとフリーズした場合の自動復旧)
 
-OSやカーネルごとフリーズしてしまうような重大な障害(ソフトウェア側の
-自動再起動では復旧できないケース)まで自動復旧させたい場合は、
-Raspberry Pi OS標準のハードウェアウォッチドッグを有効にできる:
+`./install_services.sh` が自動的に設定する。OSやカーネルごとフリーズ
+してしまうような重大な障害(サービス単体の`Restart=on-failure`では
+復旧できないケース)に対応するため、Raspberry Pi標準のハードウェア
+ウォッチドッグ(Broadcom SoC内蔵、`/dev/watchdog`)を使う:
+
+- `/boot/firmware/config.txt`(または`/boot/config.txt`)に
+  `dtparam=watchdog=on`を追記(無ければ)
+- `/etc/systemd/system.conf`に`RuntimeWatchdogSec=14`を設定
+
+`systemd`(PID 1)自身が、OSが正常に動いている限り定期的にこの
+ウォッチドッグへ「生きています」の合図を送り続ける。**OS/カーネルごと
+完全にフリーズしてこの合図が止まると、14秒後にハードウェアが強制的に
+本体の電源を再投入する**。個々のサービス(qzss-map/qzss-decoder)が
+クラッシュするだけのケースは引き続き`Restart=on-failure`側で対応する
+ため、アプリ側のコード変更は不要。
+
+**`dtparam=watchdog=on`の有効化には再起動が必要**(`install_services.sh`
+はこの行の追加だけ行い、自動では再起動しない)。初回セットアップ時は
+最後に`sudo reboot`しておくこと。有効化されているかは次で確認できる:
 
 ```bash
-# /boot/firmware/config.txt (または /boot/config.txt) に追記
-dtparam=watchdog=on
-sudo reboot
+wdctl   # Firmware Timeout が表示されれば有効
 ```
-
-有効化後、`qzss-map.service` に `WatchdogSec=30` と `Type=notify`
-相当の生存通知が必要になるため、アプリ側の対応が別途必要。
-現状は導入していない(検証環境のない変更を安全のため見送っている)。
-必要になった場合は相談してほしい。

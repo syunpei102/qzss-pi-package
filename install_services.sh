@@ -56,6 +56,39 @@ sudo systemctl enable --now "qzss-urgent-check.timer"
 echo "📡 状態報告タイマーを有効化します(5分おき。温度・リモートコマンド受信)"
 sudo systemctl enable --now "qzss-report-status.timer"
 
+echo "🐕 ハードウェアウォッチドッグを設定します(OSごとフリーズした場合の自動電源再投入)"
+WATCHDOG_REBOOT_NEEDED=0
+# Raspberry Pi OS bookworm以降は/boot/firmware/config.txt、それ以前は/boot/config.txt
+BOOT_CONFIG=""
+if [ -f /boot/firmware/config.txt ]; then
+  BOOT_CONFIG="/boot/firmware/config.txt"
+elif [ -f /boot/config.txt ]; then
+  BOOT_CONFIG="/boot/config.txt"
+fi
+if [ -n "$BOOT_CONFIG" ]; then
+  if ! grep -q "^dtparam=watchdog=on" "$BOOT_CONFIG" 2>/dev/null; then
+    echo "dtparam=watchdog=on" | sudo tee -a "$BOOT_CONFIG" > /dev/null
+    WATCHDOG_REBOOT_NEEDED=1
+  fi
+else
+  echo "⚠️  boot設定ファイルが見つかりません(Raspberry Pi以外の環境の可能性)。ハードウェアウォッチドッグの設定をスキップします"
+fi
+# BroadcomのSoCウォッチドッグ(bcm2835_wdt)はハード上限が15秒程度のため、
+# 余裕を持たせて14秒にする。この値はsystemd(PID1)自身がOSが生きている限り
+# 定期的に/dev/watchdogへ書き込むことで維持され、カーネルごとフリーズして
+# 書き込みが止まると、この秒数だけ待って強制的に本体を再起動する
+if [ -f /etc/systemd/system.conf ] && [ -n "$BOOT_CONFIG" ]; then
+  if grep -q "^#\?RuntimeWatchdogSec=" /etc/systemd/system.conf; then
+    sudo sed -i 's/^#\?RuntimeWatchdogSec=.*/RuntimeWatchdogSec=14/' /etc/systemd/system.conf
+  else
+    echo "RuntimeWatchdogSec=14" | sudo tee -a /etc/systemd/system.conf > /dev/null
+  fi
+  sudo systemctl daemon-reexec 2>/dev/null || true
+fi
+if [ "$WATCHDOG_REBOOT_NEEDED" -eq 1 ]; then
+  echo "⚠️  dtparam=watchdog=on を追加しました。有効化には再起動が必要です(このスクリプトでは自動再起動しません。準備ができたら sudo reboot してください)"
+fi
+
 echo ""
 echo "✅ セットアップ完了。状態確認コマンド:"
 echo "   systemctl status qzss-map@$USER_NAME"

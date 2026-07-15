@@ -53,7 +53,7 @@ fi
 
 echo "🗺️  地図アプリを起動します ($MAP_DIR, port $HTTP_PORT)"
 (cd "$MAP_DIR" && [ -d node_modules ] || npm install --omit=dev)
-(cd "$MAP_DIR" && PORT="$HTTP_PORT" node server.js > /tmp/qzss_map_local.log 2>&1) &
+(cd "$MAP_DIR" && PORT="$HTTP_PORT" LOCAL_STATE_ONLY=true node server.js > /tmp/qzss_map_local.log 2>&1) &
 MAP_PID=$!
 trap 'kill "$MAP_PID" 2>/dev/null' EXIT
 

@@ -94,7 +94,24 @@ sudo systemctl stop qzss-map.service
 - 復旧に成功した場合はDiscord通知が飛ばない(正常系なので静かなままで
   良い)ことも合わせて確認
 
-## 7. (任意)温度閾値超過時のDiscord通知
+## 7. ハードウェアウォッチドッグの確認
+
+```bash
+wdctl
+```
+
+`Firmware Timeout` 等が表示されれば有効化されている(`install_services.sh`
+実行後に`sudo reboot`していないと無効のまま)。実際にOSごとフリーズさせて
+試すのは危険なので必須ではないが、以下で「systemdが定期的にウォッチ
+ドッグへ合図を送っていること」だけは確認できる:
+
+```bash
+systemctl show -p WatchdogDevice,RuntimeWatchdogUSec
+```
+
+`RuntimeWatchdogUSec=14000000` (14秒)になっていればOK。
+
+## 8. (任意)温度閾値超過時のDiscord通知
 
 意図的に高温状態を作るのは実機に負荷がかかるため必須ではないが、可能で
 あれば `TEMP_WARN` / `TEMP_CRITICAL`(`qzss.env`)を一時的に低い値に
