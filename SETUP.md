@@ -78,9 +78,11 @@ ls /dev/ttyUSB* /dev/ttyACM*
 ```bash
 cd ~/qzss/qzss-pi-package
 export QZSS_CLOUD_URL="https://eq.shum10.com/ingest"
-export QZSS_INGEST_TOKEN="4552855f00070aecee0278b9ba8dbc7c"
+export QZSS_INGEST_TOKEN="<Cloud Run側のINGEST_TOKENと同じ値。デプロイ担当者に確認する>"
 ./start_pi.sh <シリアルポート> 115200
 ```
+
+秘密のトークンなので、このファイルや`qzss.env`以外の場所(コミットする設定ファイル等)には書かないこと。
 
 地図は `https://eq.shum10.com` を開けばどの端末からでも見られる。
 
@@ -190,17 +192,27 @@ tail -f ~/qzss/qzss-pi-package/update_state/update_check.log
 
 ### 管理サイト(デバイス管理ダッシュボード)
 
-Cloud Run上の `https://<デプロイ先>/device-admin` にアクセスすると、
+Cloud Run上の `https://eq.shum10.com/device-admin` にアクセスすると、
 登録済みラズパイ一覧・温度・稼働時間・オンライン状態が確認でき、
 「再起動を予約」「更新確認を予約」ボタンから遠隔操作できる。
-ログインには `ADMIN_TOKEN` (サーバー側の環境変数として設定する秘密の
-トークン)が必要。デプロイ担当者に確認するか、
-`openssl rand -hex 32` などで新規発行して
-Cloud Runの環境変数 `ADMIN_TOKEN` に設定する。
 
-なお「表示地域の設定」(旧 `admin.html`)へのリンクは、この管理サイト
-内(ログイン後の画面)からのみ辿れるようにしてあり、地図表示側の
-画面には管理者向けの導線は置いていない。
+ログインはメールアドレス+パスワード(サーバー側の環境変数
+`ADMIN_EMAIL` / `ADMIN_PASSWORD_HASH` / `SESSION_SECRET` で設定)。
+運用者本人以外はログインできない想定で、複数アカウントには対応していない。
+パスワードのハッシュ値は `qzss-map` リポジトリの
+`node hash_admin_password.js 'パスワード'` で生成し、
+`gcloud run deploy qzss-map --update-env-vars ADMIN_PASSWORD_HASH=...`
+で反映する(平文パスワードはどこにも保存しない)。
+
+各拠点(ラズパイ)ごとに「対象地域」(都道府県)を割り当てられる。
+割り当てると、その拠点向けの地図表示(`https://eq.shum10.com/?device=<拠点ID>`
+のようにURLに`?device=`パラメータを付けて開いた画面)が、その都道府県+
+周辺地方(例: 東京→関東)だけにズーム固定され、対象地域外の通報は
+ラズパイ側でもそれ以上処理されなくなる(サイネージ設置先ごとに
+地元の情報だけを表示したい場合に使う。`?device=`を付けずに開いた
+一般公開ビューは今まで通り全国対象のまま)。`?device=`に指定する
+拠点IDは、ラズパイの`qzss.env`の`QZSS_DEVICE_ID`(未設定なら
+hostname)と一致させる。
 
 ### 応用: ハードウェアウォッチドッグ(任意・上級者向け)
 

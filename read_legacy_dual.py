@@ -24,9 +24,11 @@ import operator
 import os
 import queue
 import random
+import socket
 import threading
 import time
 import urllib.parse
+import urllib.request
 from collections import deque
 from functools import reduce
 
@@ -50,9 +52,86 @@ recent_content_keys = deque(maxlen=RECENT_CONTENT_HISTORY_SIZE)
 
 CLOUD_URL = os.environ.get("QZSS_CLOUD_URL", "").strip()
 TOKEN = os.environ.get("QZSS_INGEST_TOKEN", "").strip()
+DEVICE_ID = os.environ.get("QZSS_DEVICE_ID", "").strip() or socket.gethostname()
 
 HEARTBEAT_INTERVAL_SEC = 30
 serial_ok = threading.Event()
+
+# ==================================================
+# 拠点(このラズパイ)に割り当てられた地域設定の取得
+#
+# 管理サイトで拠点に都道府県を割り当てると、その周辺地方まで展開された
+# 都道府県IDリストを /device-region/{DEVICE_ID} から取得できる。割り当て
+# られている場合、対象外の都道府県だけの通報はデコード後すぐに処理を
+# 打ち切る(「送信しない」のではなく「それ以上処理しない」)。
+#
+# allowed_prefecture_ids は None のときは絞り込みなし(全国対象、既定)。
+# 取得に失敗した場合は直前のキャッシュ、キャッシュも無ければ絞り込み
+# なしにフェイルオープンする(通信不調で通報が無言のまま消える事故を
+# 防ぐため)。
+# ==================================================
+REGION_REFRESH_INTERVAL_SEC = 10 * 60
+REGION_CACHE_PATH = os.path.expanduser("~/.qzss_region_cache.json")
+allowed_prefecture_ids = None  # set[int] | None
+
+
+def _cloud_base_url():
+    return CLOUD_URL[: -len("/ingest")] if CLOUD_URL.endswith("/ingest") else CLOUD_URL
+
+
+def _load_region_cache():
+    global allowed_prefecture_ids
+    try:
+        with open(REGION_CACHE_PATH, "r", encoding="utf-8") as f:
+            ids = json.load(f)
+        if isinstance(ids, list) and ids:
+            allowed_prefecture_ids = set(ids)
+    except (OSError, ValueError):
+        pass
+
+
+def _save_region_cache(ids):
+    try:
+        with open(REGION_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(sorted(ids) if ids else None, f)
+    except OSError:
+        pass
+
+
+def _fetch_region_config_once():
+    global allowed_prefecture_ids
+    url = f"{_cloud_base_url()}/device-region/{urllib.parse.quote(DEVICE_ID, safe='')}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        ids = data.get("prefectureIds")
+        if ids:
+            allowed_prefecture_ids = set(ids)
+            _save_region_cache(ids)
+        else:
+            allowed_prefecture_ids = None
+            _save_region_cache(None)
+    except Exception as e:
+        print(f"⚠️ 拠点の地域設定の取得に失敗しました(直前のキャッシュのまま続行): {e}")
+
+
+def region_config_refresh_loop():
+    _load_region_cache()
+    while True:
+        _fetch_region_config_once()
+        time.sleep(REGION_REFRESH_INTERVAL_SEC)
+
+
+def is_in_scope(params):
+    """拠点に地域が割り当てられている場合、対象外の都道府県だけの通報を
+    除外する。対象都道府県が判別できない通報(震源のみ・津波・Jアラート等)
+    は現行通り常に処理する。"""
+    if allowed_prefecture_ids is None:
+        return True
+    prefs = params.get("prefectures_raw")
+    if not prefs:
+        return True
+    return any(p in allowed_prefecture_ids for p in prefs)
 
 # 直近に受信できた通報がどの衛星からのものだったかを覚えておき、ハートビートに
 # 乗せて送る。個々の災危通報は特定カテゴリ(重要/注意情報)しかクラウドへ送らない
@@ -396,6 +475,7 @@ if __name__ == '__main__':
     threading.Thread(target=_sender_worker_loop, daemon=True).start()
     threading.Thread(target=send_heartbeat_loop, daemon=True).start()
     threading.Thread(target=send_test_signal_loop, daemon=True).start()
+    threading.Thread(target=region_config_refresh_loop, daemon=True).start()
 
     RECONNECT_WAIT_SEC = 5
     IDLE_TIMEOUT_SEC = 20
@@ -465,6 +545,14 @@ if __name__ == '__main__':
                                 print(sentence)
                                 params, key = decode_full(sentence)
                                 note_satellite_seen(params)
+                                # 拠点に地域が割り当てられていて、かつこの通報が対象都道府県
+                                # 以外だけを対象にしている場合、ここで即座に処理を打ち切る
+                                # (「送信しない」のではなく、重複排除の登録も含めて
+                                # 「それ以上処理しない」)。デコード自体はどの通報が対象かを
+                                # 判定するために避けられないが、それ以降は一切行わない。
+                                if not is_in_scope(params):
+                                    print("(拠点の対象地域外のため処理をスキップ)")
+                                    continue
                                 # raw(プリアンブル・CRC・衛星IDを含まない本体)で重複判定する。
                                 # sentence はプリアンブルが送信ごとに巡回して毎回変わるため使えない。
                                 dedup_key = params.get("raw") or sentence

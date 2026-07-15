@@ -1,6 +1,12 @@
 @echo off
 REM 実機の受信機からクラウド(Cloud Run)へ送信する一発起動スクリプト(Windows用)。
-REM 使い方: start_receiver.bat COM3 [ボーレート(既定9600)]
+REM 地図側は critical/caution 統合済みのため送信先は1本(QZSS_CLOUD_URL)のみ。
+REM 秘密のトークンはこのファイルに直接書かず、実行前に環境変数で設定すること
+REM (公開リポジトリのため)。
+REM
+REM 使い方:
+REM   set QZSS_INGEST_TOKEN=xxxxxxxx
+REM   start_receiver.bat COM3 [ボーレート(既定9600)]
 
 cd /d "%~dp0"
 
@@ -15,6 +21,11 @@ if "%PORT%"=="" (
   exit /b 1
 )
 
+if "%QZSS_INGEST_TOKEN%"=="" (
+  echo QZSS_INGEST_TOKEN が未設定です。事前に「set QZSS_INGEST_TOKEN=xxxx」を実行してください。
+  exit /b 1
+)
+
 if not exist venv (
   echo Python venv が無いので作成します
   python -m venv venv
@@ -24,10 +35,7 @@ if not exist venv (
   call venv\Scripts\activate.bat
 )
 
-set QZSS_CLOUD_URL_CRITICAL=https://qzss-map-85436528666.asia-northeast1.run.app/ingest
-set QZSS_INGEST_TOKEN_CRITICAL=4552855f00070aecee0278b9ba8dbc7c
-set QZSS_CLOUD_URL_CAUTION=https://qzss-map-caution-85436528666.asia-northeast1.run.app/ingest
-set QZSS_INGEST_TOKEN_CAUTION=51af2853155bdbc88f29957ad9e65be8
+if "%QZSS_CLOUD_URL%"=="" set QZSS_CLOUD_URL=https://eq.shum10.com/ingest
 
-echo 受信機からの取り込みを開始し、重要情報はメイン地図へ、注意情報は注意情報マップへ送信します (%PORT% @ %BAUDRATE%)
+echo 受信機からの取り込みを開始し、重要な通報を地図へ送信します (%PORT% @ %BAUDRATE%) -^> %QZSS_CLOUD_URL%
 python read_legacy_dual.py %PORT% %BAUDRATE% --nmea
