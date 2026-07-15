@@ -28,8 +28,42 @@ STATE_DIR="$DIR/update_state"
 LOG_FILE="$STATE_DIR/update_check.log"
 mkdir -p "$STATE_DIR"
 
+# qzss.env に DISCORD_WEBHOOK_URL 等を書いている場合はここで読み込む
+# (systemdサービス経由でも手動実行でも同じように効くようにする)
+if [ -f "$DIR/qzss.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$DIR/qzss.env"
+  set +a
+fi
+
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
+}
+
+# 更新失敗・ロールバック等の重大なイベントだけDiscordに通知する
+# (通常の「更新なし」「正常に更新できた」は通知せず、ログにだけ残す。
+# 毎晩のログを人間が見に行かなくても、問題が起きた時だけ気づけるように
+# するための仕組みなので、鳴らしすぎて無視されるようになると意味が無い)
+notify_discord() {
+  local message="$1"
+  [ -z "${DISCORD_WEBHOOK_URL:-}" ] && return 0
+  local hostname_str full_text
+  hostname_str="$(hostname)"
+  full_text="🚨 QZSS OTA更新 (${hostname_str})
+${message}"
+  # jqがあれば安全にJSONエスケープする。無ければ最低限(バックスラッシュ・
+  # ダブルクォート・改行)だけ手動エスケープするフォールバックにする
+  local payload
+  if command -v jq > /dev/null 2>&1; then
+    payload="$(jq -n --arg content "$full_text" '{content: $content}')"
+  else
+    local escaped
+    escaped="$(printf '%s' "$full_text" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s\\n", $0}')"
+    payload="{\"content\": \"${escaped%\\n}\"}"
+  fi
+  curl -fsS -X POST -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL" \
+    > /dev/null 2>&1 || log "⚠️ Discordへの通知に失敗しました"
 }
 
 # systemdサービスを使っている場合はそちらを再起動し、使っていない場合
@@ -140,12 +174,15 @@ if health_check; then
 fi
 
 log "❌ 更新後に地図アプリが応答しません。ロールバックします"
+notify_discord "更新後に地図アプリが応答しなくなったため、直前のコミットへロールバックを試みます。"
 rollback_repo "$MAP_DIR"
 rollback_repo "$PI_DIR"
 restart_services
 
 if health_check; then
   log "✅ ロールバック後、正常に起動していることを確認しました"
+  notify_discord "ロールバックにより復旧しました。原因(新しいコミットの内容)を確認してください。\nログ: update_state/update_check.log"
 else
   log "🚨 ロールバック後も応答がありません。手動での確認が必要です"
+  notify_discord "⚠️ ロールバックしても地図アプリが復旧しません。至急、実機の確認をお願いします。"
 fi
