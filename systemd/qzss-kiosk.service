@@ -1,0 +1,18 @@
+[Unit]
+Description=QZSS キオスク表示(Chromium)
+After=graphical.target qzss-map@%i.service
+Wants=qzss-map@%i.service
+# クラッシュを繰り返しても再起動を止めない([Service]ではなく[Unit]に書く)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=%i
+# lightdmの自動ログインでXセッションが立ち上がるまで少し待つ余地を持たせる
+ExecStartPre=/bin/sleep 5
+ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --use-angle=gl-egl --enable-gpu-rasterization --enable-zero-copy --disable-smooth-scrolling http://localhost:8080'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

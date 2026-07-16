@@ -24,7 +24,7 @@ echo "📄 systemdユニットファイルを配置します(sudoが必要です
 # qzss-map / qzss-decoder はユーザー名を差し替えられるテンプレート
 # ユニット(@)のまま配置する。更新チェック系はタイマーとの紐付けを
 # 単純にするため、%i をこのユーザー名に直接置き換えた通常ユニットにする
-for f in "$DIR"/systemd/qzss-map.service "$DIR"/systemd/qzss-decoder.service; do
+for f in "$DIR"/systemd/qzss-map.service "$DIR"/systemd/qzss-decoder.service "$DIR"/systemd/qzss-kiosk.service; do
   name="$(basename "$f" .service)"
   sudo cp "$f" "/etc/systemd/system/${name}@.service"
 done
@@ -49,6 +49,9 @@ sudo systemctl daemon-reload
 echo "▶️  アプリ本体のサービスを有効化・起動します"
 sudo systemctl enable --now "qzss-map@$USER_NAME.service"
 sudo systemctl enable --now "qzss-decoder@$USER_NAME.service"
+
+echo "🖥️  キオスク表示を有効化します(クラッシュ時も自動再起動)"
+sudo systemctl enable --now "qzss-kiosk@$USER_NAME.service"
 
 echo "⏰ 更新チェックのタイマーを有効化します(毎晩3時 + 緊急時15分おき)"
 sudo systemctl enable --now "qzss-update-check.timer"
