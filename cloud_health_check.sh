@@ -59,6 +59,11 @@ else
   current_cloud_state="offline"
 fi
 
+# 状態が変わらなくても、実際に毎回チェックが動いていることを目視で
+# 確認できるよう、実行のたびに1行だけ記録する(Discord通知は状態が
+# 変わった時だけ、というedge-trigger方針とは別に、ログだけは常時記録する)
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] チェック実行: ${current_cloud_state}" >> "$LOG_FILE"
+
 if [ "$current_cloud_state" != "$last_cloud_state" ]; then
   if [ "$current_cloud_state" = "offline" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚨 クラウド(${CLOUD_BASE_URL})が応答しません" \

@@ -4,6 +4,9 @@ Description=QZSS クラウド死活監視(30秒おき)
 [Timer]
 OnBootSec=30s
 OnUnitActiveSec=30s
+# systemdタイマーは既定でAccuracySec=1分の"まとめ実行"猶予を持つため、
+# 指定してもズレる(実測30〜58秒)。正確に30秒間隔にするため厳密化する
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target
