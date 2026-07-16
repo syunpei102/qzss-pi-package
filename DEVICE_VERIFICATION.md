@@ -12,6 +12,29 @@
 > 実装以来ずっと無反応だった)と、`update_check.sh`の`restart_services()`
 > が`pipefail`の影響で常に「サービスが見つからない」と誤判定し
 > サービス再起動をスキップしていた問題。どちらも修正済み・pushで反映済み。
+>
+> **同日、キオスク表示(ローカルkiosk)の安定性・軽量化についても実機で
+> 検証した。分かったこと:**
+> - **GPU(`--use-angle=gl-egl`等)は使わないこと。** Pi 3B+のGPU
+>   ドライバ(Mesa/VideoCore IV)がES3.0コンテキスト生成に失敗し、
+>   `--type=renderer`のクラッシュダンプが数十分おきに発生した
+>   (X11・Wayland両方で確認、部分的なGPU利用でも同様)。
+>   `--use-angle=swiftshader --enable-unsafe-swiftshader`(ソフトウェア
+>   WebGL)で安定する。単純な`--disable-gpu`はWebGL自体が初期化に
+>   失敗するため使わないこと。
+> - **Wayland(labwc)よりX11(rpd-x/openbox)の方が大幅に軽い。**
+>   labwcの画面合成処理だけで常時CPU 69%前後を消費していたが、
+>   X11+openboxに切り替えると合成コストがほぼ0になった
+>   (`/etc/lightdm/lightdm.conf`の`user-session`/`autologin-session`を
+>   `rpd-labwc`→`rpd-x`に変更)。
+> - **DPMS(画面電源管理)を無効化し忘れると、無操作10分で画面が
+>   消える。** キオスクはマウス・キーボード操作が一切無いため
+>   必ず発生する。`xset s off; xset s noblank; xset -dpms`を
+>   autostartに入れておくこと。
+> - デスクトップのパネル・アイコン管理・スクリーンセーバー
+>   (`lxpanel-pi`/`pcmanfm-pi`/`xscreensaver`)は
+>   `~/.config/lxsession/rpd-x/autostart`を空ファイルにして止める
+>   (labwcの場合は`~/.config/labwc/autostart`)。
 
 ## 0. 前提
 
