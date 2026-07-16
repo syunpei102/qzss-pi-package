@@ -16,7 +16,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
 PORT="$1"
-BAUDRATE="${2:-115200}"
+BAUDRATE="${2:-9600}"
 
 if [ -z "$PORT" ] || [ -z "$QZSS_CLOUD_URL" ]; then
   echo "使い方:"

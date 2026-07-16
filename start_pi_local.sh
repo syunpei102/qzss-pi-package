@@ -25,7 +25,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
 PORT_ARG="$1"
-BAUDRATE="${2:-115200}"
+BAUDRATE="${2:-9600}"
 HTTP_PORT="${HTTP_PORT:-8080}"
 MAP_DIR="${MAP_DIR:-$DIR/../qzss-map}"
 
