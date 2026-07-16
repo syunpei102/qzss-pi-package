@@ -11,6 +11,10 @@ Type=simple
 User=%i
 WorkingDirectory=/home/%i/qzss/qzss-map
 Environment=PORT=8080
+# ラズパイ上のこのインスタンスはkiosk表示専用で、正本のデータはCloud Run
+# 側にあるため、GCSへの読み書きを試みる必要が無い(サービスアカウント
+# も無いので、試みても失敗ログが出るだけ)
+Environment=LOCAL_STATE_ONLY=true
 # ローカルkiosk表示ではトークン不要(ラズパイ内で完結するため)。
 # Web配信も兼ねる場合はここに INGEST_TOKEN=xxxx を追記する
 ExecStart=/usr/bin/node server.js
