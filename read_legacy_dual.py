@@ -292,17 +292,21 @@ def route_report(params, category_key, is_test_data=False):
 
 
 def send_heartbeat_loop():
+    # 受信機(アンテナ)がまだシリアル接続できていなくても送る。この
+    # ハートビートは「プログラム自体がクラウドに到達できているか」の
+    # 指標であり、「受信機からデータが取れているか」とは別の関心事
+    # なので、serial_okの状態に関わらず常時30秒おきに送る
     while True:
-        if serial_ok.is_set():
-            payload = {
-                "type": "Heartbeat",
-                "timestamp": datetime.datetime.now().isoformat(),
-                "satellite_id": last_satellite_seen["satellite_id"],
-                "satellite_prn": last_satellite_seen["satellite_prn"],
-            }
-            # ハートビートは30秒おきに次が来るので、古い1件のために
-            # リトライして詰まらせる必要はない(失敗したら諦めて次を待つ)
-            enqueue_send(payload, retryable=False)
+        payload = {
+            "type": "Heartbeat",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "satellite_id": last_satellite_seen["satellite_id"],
+            "satellite_prn": last_satellite_seen["satellite_prn"],
+            "serial_connected": serial_ok.is_set(),
+        }
+        # ハートビートは30秒おきに次が来るので、古い1件のために
+        # リトライして詰まらせる必要はない(失敗したら諦めて次を待つ)
+        enqueue_send(payload, retryable=False)
         time.sleep(HEARTBEAT_INTERVAL_SEC)
 
 
