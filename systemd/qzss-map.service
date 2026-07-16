@@ -15,6 +15,10 @@ Environment=PORT=8080
 # 側にあるため、GCSへの読み書きを試みる必要が無い(サービスアカウント
 # も無いので、試みても失敗ログが出るだけ)
 Environment=LOCAL_STATE_ONLY=true
+# 誰も公開サイトを見ていなくても、このラズパイ自身が計測したE2E
+# レイテンシ(受信〜描画完了)を実績資料として貯めておきたいため、
+# ローカルで完結した計測結果をクラウド側にも転送する
+Environment=CLOUD_LATENCY_REPORT_URL=https://eq.shum10.com/client-timing
 # ローカルkiosk表示ではトークン不要(ラズパイ内で完結するため)。
 # Web配信も兼ねる場合はここに INGEST_TOKEN=xxxx を追記する
 # 警報受信からキオスク画面への配信(WebSocket)を担う経路なので、
