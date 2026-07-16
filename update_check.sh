@@ -75,9 +75,7 @@ ${message}"
 # あった。実機での初回OTAテストで発覚)
 restart_services() {
   local unit_files
-  unit_files="$(systemctl list-unit-files 2>&1)"
-  log "DEBUG restart_services: capture_exit=$? len=${#unit_files} whoami=$(whoami) path=$PATH"
-  log "DEBUG restart_services: head=$(printf '%s' "$unit_files" | head -c 200)"
+  unit_files="$(systemctl list-unit-files 2>/dev/null)"
   if printf '%s' "$unit_files" | grep -q "qzss-map@"; then
     log "サービスを再起動します(qzss-map, qzss-decoder)"
     sudo systemctl restart "qzss-map@$(whoami)" "qzss-decoder@$(whoami)" 2>&1 | tee -a "$LOG_FILE"
