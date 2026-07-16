@@ -2,6 +2,12 @@
 Description=QZSS 受信機デコーダ(read_legacy_dual.py)
 After=network.target qzss-map.service
 Wants=qzss-map.service
+# クラッシュを繰り返しても再起動を止めない(既定では短時間に5回落ちると
+# systemdが諦めて「failed」のまま放置してしまうため、上限を外す)。
+# StartLimitIntervalSec/StartLimitBurstは[Service]ではなく[Unit]
+# セクションに書く必要がある(誤って[Service]に置いていたため無効化
+# されていた。journalctlに"Unknown key"警告が出ていたのが手がかりだった)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -18,9 +24,6 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/%i/qzss/qzss-pi-package/venv/bin/python3 read_legacy_dual.py ${QZSS_SERIAL_PORT} ${QZSS_BAUDRATE}
 Restart=on-failure
 RestartSec=5
-# クラッシュを繰り返しても再起動を止めない(既定では短時間に5回落ちると
-# systemdが諦めて「failed」のまま放置してしまうため、上限を外す)
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target
