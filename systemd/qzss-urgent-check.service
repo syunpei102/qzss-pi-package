@@ -4,5 +4,8 @@ Description=QZSS 緊急更新チェック(軽量・高頻度)
 [Service]
 Type=oneshot
 User=%i
+# 警報描画(qzss-map/qzss-kiosk)や受信処理(qzss-decoder)より優先度を
+# 下げ、CPU競合時は必ずこちらが譲る
+Nice=10
 WorkingDirectory=/home/%i/qzss/qzss-pi-package
 ExecStart=/home/%i/qzss/qzss-pi-package/check_urgent.sh

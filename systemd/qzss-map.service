@@ -17,6 +17,9 @@ Environment=PORT=8080
 Environment=LOCAL_STATE_ONLY=true
 # ローカルkiosk表示ではトークン不要(ラズパイ内で完結するため)。
 # Web配信も兼ねる場合はここに INGEST_TOKEN=xxxx を追記する
+# 警報受信からキオスク画面への配信(WebSocket)を担う経路なので、
+# バックグラウンドの定期タスクより優先させる
+Nice=-5
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5

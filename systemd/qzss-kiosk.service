@@ -10,6 +10,9 @@ Type=simple
 User=%i
 # lightdmの自動ログインでXセッションが立ち上がるまで少し待つ余地を持たせる
 ExecStartPre=/bin/sleep 5
+# 警報描画がバックグラウンドの定期タスク(死活監視・OTAチェック等)と
+# CPUを取り合わないよう、常にこちらを優先させる
+Nice=-5
 # Pi 3B+のGPUドライバ(VideoCore IV + Mesa)とChromium 150のGPU
 # ラスタライズの組み合わせで、レンダラープロセスが数十分おきにクラッシュ
 # することを実機で確認した(--type=rendererのクラッシュダンプ、GPU-GL

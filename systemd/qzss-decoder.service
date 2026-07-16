@@ -21,6 +21,9 @@ EnvironmentFile=/home/%i/qzss/qzss-pi-package/qzss.env
 # systemd経由の非TTYではフルバッファになるため)。デバッグ時にログが
 # 「何も起きていないように見える」原因になるので必ず付ける
 Environment=PYTHONUNBUFFERED=1
+# 受信データの取りこぼしが警報の遅延・欠落に直結するため、CPU競合時も
+# バックグラウンドの定期タスク(死活監視・OTAチェック等)より優先させる
+Nice=-5
 ExecStart=/home/%i/qzss/qzss-pi-package/venv/bin/python3 read_legacy_dual.py ${QZSS_SERIAL_PORT} ${QZSS_BAUDRATE}
 Restart=on-failure
 RestartSec=5
