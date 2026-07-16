@@ -8,8 +8,10 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=%i
-# lightdmの自動ログインでXセッションが立ち上がるまで少し待つ余地を持たせる
-ExecStartPre=/bin/sleep 5
+# lightdmの自動ログインでXセッションが立ち上がるまで待つ。固定sleepだと
+# 実際に早く準備できた場合でも常に同じ秒数待ってしまうため、Xの
+# ソケットができ次第すぐ先に進むポーリング方式にする(最大10秒まで)
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 50); do [ -e /tmp/.X11-unix/X0 ] && exit 0; sleep 0.2; done'
 # 警報描画がバックグラウンドの定期タスク(死活監視・OTAチェック等)と
 # CPUを取り合わないよう、常にこちらを優先させる
 Nice=-5
