@@ -4,12 +4,12 @@
 # (git fetchだけで、変化が無ければ即終了する)。
 #
 # 使い方(開発側/リモート側):
-#   重大なバグを直したので今すぐラズパイに反映したい場合、
-#   qzss_pi_package/URGENT_UPDATE の中身を書き換えてcommit・pushする。
-#   例:
+#   重大なバグを直したので今すぐラズパイに反映したい場合、このリポジトリ
+#   (qzss-pi-package)直下の URGENT_UPDATE の中身を書き換えてcommit・push
+#   する。例(qzss-pi-packageのリポジトリ直下で実行):
 #     echo "最終更新: $(date '+%Y-%m-%d %H:%M') 深刻な地図描画バグの緊急修正" \
-#       >> qzss_pi_package/URGENT_UPDATE
-#     git add qzss_pi_package/URGENT_UPDATE
+#       >> URGENT_UPDATE
+#     git add URGENT_UPDATE
 #     git commit -m "緊急更新の合図"
 #     git push
 #
@@ -25,7 +25,7 @@ mkdir -p "$STATE_DIR"
 cd "$DIR" || exit 1
 git fetch origin main --quiet 2>/dev/null || exit 0
 
-remote_content="$(git show origin/main:qzss_pi_package/URGENT_UPDATE 2>/dev/null || true)"
+remote_content="$(git show origin/main:URGENT_UPDATE 2>/dev/null || true)"
 [ -z "$remote_content" ] && exit 0
 
 seen_content=""
