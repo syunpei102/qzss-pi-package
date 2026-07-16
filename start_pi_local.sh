@@ -73,9 +73,13 @@ CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chrom
 # Pi 3B+のGPU(VideoCore IV)を--use-angle=gl-eglで有効化すると、
 # 実機で確認したところレンダラープロセスが数十分おきにクラッシュする
 # (GPU-GLコンテキスト関連の--type=rendererクラッシュダンプを確認)。
-# GPU有効化前(このフラグが無い状態)ではこの種のクラッシュは発生して
-# いなかったため、--disable-gpuでソフトウェア描画に固定し安定性を
-# 優先する(描画は多少遅くなるが、クラッシュが直る)
+# ハードウェアGPUパスを避け、ソフトウェアWebGL(SwiftShader)に固定して
+# 安定性を優先する(描画は多少遅くなるが、クラッシュが直る)。
+# 注意: 単純な--disable-gpuだとWebGL自体が初期化に失敗し(MapLibre GL
+# JSはWebGL必須)、地図が全く表示されなくなるため使わないこと(実機で
+# 確認済み)。--use-angle=swiftshaderだけでは software WebGL fallback
+# が拒否されるため、--enable-unsafe-swiftshaderとの併用が必須
+# (信頼済みの自前コンテンツのみのkioskなので許容する)
 # --disable-smooth-scrolling: 慣性スクロール等の余計な演出を削って軽くする
 # --password-store=basic: 指定しないと初回起動時に「キーリングの
 # パスワードを設定してください」というダイアログが表示され、無人の
@@ -89,7 +93,8 @@ CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chrom
   --disable-restore-session-state \
   --check-for-update-interval=31536000 \
   --password-store=basic \
-  --disable-gpu \
+  --use-angle=swiftshader \
+  --enable-unsafe-swiftshader \
   --disable-smooth-scrolling \
   "http://localhost:${HTTP_PORT}" &
 CHROMIUM_PID=$!
