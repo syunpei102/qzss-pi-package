@@ -84,6 +84,9 @@ CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chrom
 # --password-store=basic: 指定しないと初回起動時に「キーリングの
 # パスワードを設定してください」というダイアログが表示され、無人の
 # キオスク画面が固まって見えてしまう(実機で確認済み)
+# --disable-background-networking / --disable-sync / --disable-features=...:
+# GoogleアカウントSync・翻訳・最適化ヒント等、kioskには不要な裏側の
+# ネットワーク通信・機能を止める
 "$CHROMIUM_BIN" \
   --kiosk \
   --incognito \
@@ -96,6 +99,11 @@ CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chrom
   --use-angle=swiftshader \
   --enable-unsafe-swiftshader \
   --disable-smooth-scrolling \
+  --disable-background-networking \
+  --disable-sync \
+  --disable-client-side-phishing-detection \
+  --disable-default-apps \
+  --disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication \
   "http://localhost:${HTTP_PORT}" &
 CHROMIUM_PID=$!
 trap 'kill "$MAP_PID" "$CHROMIUM_PID" 2>/dev/null' EXIT

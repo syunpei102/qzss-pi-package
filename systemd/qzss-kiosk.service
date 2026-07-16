@@ -22,7 +22,11 @@ ExecStartPre=/bin/sleep 5
 # WebGL has been deprecated」で拒否されるため、
 # --enable-unsafe-swiftshader との併用が必須(信頼済みの自前コンテンツ
 # のみを表示するkioskなので、この安全性トレードオフは許容する)
-ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --use-angle=swiftshader --enable-unsafe-swiftshader --disable-smooth-scrolling http://localhost:8080'
+# --disable-background-networking / --disable-sync / --disable-features=...:
+# GoogleアカウントSync・翻訳・最適化ヒント等、kioskには不要な裏側の
+# ネットワーク通信・機能を止める(実機のログで無駄なGCM登録通信の
+# 失敗が出ていたのを解消する狙いもある)
+ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --use-angle=swiftshader --enable-unsafe-swiftshader --disable-smooth-scrolling --disable-background-networking --disable-sync --disable-client-side-phishing-detection --disable-default-apps --disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication http://localhost:8080'
 Restart=on-failure
 RestartSec=5
 
