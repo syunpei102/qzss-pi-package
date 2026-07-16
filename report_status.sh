@@ -266,10 +266,17 @@ fi
 for cmd in $commands; do
   case "$cmd" in
     reboot)
-      log "🔄 再起動コマンドを受信しました。10秒後に再起動します"
+      log "🔄 再起動コマンドを受信しました。再起動します"
       notify_discord "再起動します(完了したら改めて通知します)。"
       touch "$STATE_DIR/reboot_requested"
-      ( sleep 10 && sudo /usr/bin/systemctl reboot ) &
+      # 以前は「sleep 10 && reboot」をバックグラウンド(&)で実行していたが、
+      # このサービスはType=oneshotのため、report_status.sh自体が先に
+      # 終了するとsystemdがcgroupごとバックグラウンドプロセスも巻き込んで
+      # 停止させてしまい、sleep中のreboot命令が実行されないまま消える
+      # ことを実機で確認した。systemctl rebootは要求を送るとすぐ制御を
+      # 返す(実際のシャットダウンはsystemd自身が引き継ぐ)ため、
+      # バックグラウンド化・遅延は不要で、同期的に直接呼べばよい
+      sudo /usr/bin/systemctl reboot
       ;;
     force_update_check)
       log "🔍 管理サイトからの更新確認コマンドを受信しました"
