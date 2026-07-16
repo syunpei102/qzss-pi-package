@@ -12,8 +12,15 @@
   QZSS_INGEST_TOKEN=xxxxxxxx \
   python3 read_legacy_dual.py <シリアルポート> <ボーレート>
 
-  ローカル(ラズパイ上のkiosk表示)向けにはCloud Runの代わりに
-  http://localhost:8080/ingest のようなURLを指定すればよい。
+  ローカル(ラズパイ上のkiosk表示)のみで完結させたい場合は、
+  QZSS_CLOUD_URLの代わりにhttp://localhost:8080/ingestのようなURLを
+  指定すればよい。
+
+  クラウド(Discordでの遠隔操作・公開マップ配信)を維持したまま、
+  ラズパイ本体のkiosk表示にも同時送信したい場合は、QZSS_CLOUD_URLは
+  そのままに、QZSS_LOCAL_URL=http://localhost:8080/ingest を追加で
+  指定する(クラウドへの送信とは完全に別スレッドで動くため、
+  ローカル送信が詰まってもクラウド側の速度には影響しない)。
 """
 import argparse
 import base64
@@ -51,6 +58,10 @@ RECENT_CONTENT_HISTORY_SIZE = 50
 recent_content_keys = deque(maxlen=RECENT_CONTENT_HISTORY_SIZE)
 
 CLOUD_URL = os.environ.get("QZSS_CLOUD_URL", "").strip()
+# 設定するとCLOUD_URLに加えてこちらへも同時送信する(例: ラズパイ本体で
+# 地図をkiosk表示しつつ、Discordでの遠隔操作・公開マップ配信のため
+# クラウドへの送信も維持したい場合、http://localhost:8080/ingest を指定する)
+LOCAL_URL = os.environ.get("QZSS_LOCAL_URL", "").strip()
 TOKEN = os.environ.get("QZSS_INGEST_TOKEN", "").strip()
 DEVICE_ID = os.environ.get("QZSS_DEVICE_ID", "").strip() or socket.gethostname()
 
@@ -207,6 +218,11 @@ def decode_full(sentence):
 # キューへ積むだけ(ほぼ一瞬)で次のバイトの読み取りに戻れるようにする。
 # ==================================================
 send_queue = queue.Queue()
+# ローカル(ラズパイ内kiosk表示用)送信は、クラウド送信とは完全に別の
+# キュー・スレッドにする。同じキュー/スレッドで直列に送ると、ローカル
+# 送信が詰まったり遅延した場合にクラウドへの送信(緊急地震速報等)まで
+# 遅れてしまうため
+local_send_queue = queue.Queue()
 
 
 class Sender:
@@ -275,8 +291,25 @@ def _sender_worker_loop():
         send_queue.task_done()
 
 
+def _local_sender_worker_loop():
+    """ラズパイ内のkiosk表示用地図アプリへの送信専用ループ。クラウド送信
+    (_sender_worker_loop)とは別スレッド・別キューで動くため、こちらが
+    詰まったり遅延してもクラウドへの送信速度には一切影響しない。
+    同一機内なので基本的に失敗しない想定であり、リトライもしない
+    (ベストエフォート)。"""
+    local_sender = Sender(LOCAL_URL, "")
+    while True:
+        payload = local_send_queue.get()
+        local_sender.send(payload)
+        local_send_queue.task_done()
+
+
 def enqueue_send(payload, retryable=True):
     send_queue.put((payload, 0, retryable))
+    # queue.put()はロック取得のみで一瞬で返る(送信そのものは別スレッドが
+    # 行う)ため、ここでLOCAL_URLへも積んでよい。クラウド側の速度には影響しない
+    if LOCAL_URL:
+        local_send_queue.put(payload)
 
 
 def route_report(params, category_key, is_test_data=False):
@@ -477,6 +510,8 @@ if __name__ == '__main__':
         raise SystemExit(1)
 
     threading.Thread(target=_sender_worker_loop, daemon=True).start()
+    if LOCAL_URL:
+        threading.Thread(target=_local_sender_worker_loop, daemon=True).start()
     threading.Thread(target=send_heartbeat_loop, daemon=True).start()
     threading.Thread(target=send_test_signal_loop, daemon=True).start()
     threading.Thread(target=region_config_refresh_loop, daemon=True).start()
