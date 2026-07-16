@@ -10,7 +10,11 @@ Type=simple
 User=%i
 # lightdmの自動ログインでXセッションが立ち上がるまで少し待つ余地を持たせる
 ExecStartPre=/bin/sleep 5
-ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --use-angle=gl-egl --enable-gpu-rasterization --enable-zero-copy --disable-smooth-scrolling http://localhost:8080'
+# Pi 3B+のGPUドライバ(VideoCore IV + Mesa)とChromium 150のGPU
+# ラスタライズの組み合わせで、レンダラープロセスが数十分おきにクラッシュ
+# することを実機で確認した(--type=rendererのクラッシュダンプ、GPU-GL
+# コンテキスト関連)。GPU無効化(ソフトウェア描画)に戻して安定性を優先する
+ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --disable-gpu --disable-smooth-scrolling http://localhost:8080'
 Restart=on-failure
 RestartSec=5
 

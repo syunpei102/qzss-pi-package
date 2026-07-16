@@ -28,7 +28,7 @@ for f in "$DIR"/systemd/qzss-map.service "$DIR"/systemd/qzss-decoder.service "$D
   name="$(basename "$f" .service)"
   sudo cp "$f" "/etc/systemd/system/${name}@.service"
 done
-for f in "$DIR"/systemd/qzss-update-check.service "$DIR"/systemd/qzss-urgent-check.service "$DIR"/systemd/qzss-report-status.service "$DIR"/systemd/qzss-cloud-health-check.service; do
+for f in "$DIR"/systemd/qzss-update-check.service "$DIR"/systemd/qzss-urgent-check.service "$DIR"/systemd/qzss-report-status.service "$DIR"/systemd/qzss-cloud-health-check.service "$DIR"/systemd/qzss-kiosk-watchdog.service; do
   name="$(basename "$f")"
   sed "s/%i/$USER_NAME/g" "$f" | sudo tee "/etc/systemd/system/$name" > /dev/null
 done
@@ -38,7 +38,7 @@ done
 sudo cp "$DIR/systemd/qzss-cpu-performance.service" "/etc/systemd/system/qzss-cpu-performance.service"
 
 echo "🔑 更新スクリプトがsudo無しでサービス再起動・本体再起動できるようにします"
-SUDOERS_LINE="$USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qzss-map@$USER_NAME, /usr/bin/systemctl restart qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-map@$USER_NAME qzss-decoder@$USER_NAME, /usr/bin/systemctl reboot"
+SUDOERS_LINE="$USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qzss-map@$USER_NAME, /usr/bin/systemctl restart qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-map@$USER_NAME qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-kiosk@$USER_NAME, /usr/bin/systemctl reboot"
 echo "$SUDOERS_LINE" | sudo tee "/etc/sudoers.d/qzss-update" > /dev/null
 sudo chmod 440 /etc/sudoers.d/qzss-update
 sudo visudo -c -f /etc/sudoers.d/qzss-update
@@ -65,6 +65,9 @@ sudo systemctl enable --now "qzss-cloud-health-check.timer"
 
 echo "⚡ CPUガバナーをperformance(常時最大クロック)に固定します"
 sudo systemctl enable --now "qzss-cpu-performance.service"
+
+echo "🖥️  キオスクのレンダラークラッシュ監視タイマーを有効化します(30秒おき)"
+sudo systemctl enable --now "qzss-kiosk-watchdog.timer"
 
 echo "🐕 ハードウェアウォッチドッグを設定します(OSごとフリーズした場合の自動電源再投入)"
 WATCHDOG_REBOOT_NEEDED=0

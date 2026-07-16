@@ -70,16 +70,12 @@ done
 
 echo "🖥️  Chromiumをkioskモードで起動します"
 CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chromium-browser)"
-# Pi 3等のGPUが非力な機種向けに、WebGL(MapLibre GL JS)がなるべく
-# ハードウェアアクセラレーションで動くように明示的にフラグを付ける。
-# --use-angle=gl-egl: VideoCoreのEGL経由で描画(ソフトウェアフォールバックを
-#   避ける)。実機(Pi 3B+, Chromium 150)で検証したところ旧来の
-#   --use-gl=egl はこのバージョンのChromiumでは受け付けられず即座に
-#   GPUプロセスが終了してしまうことを確認した。--use-angle=gl-eglなら
-#   GPUプロセスが安定して動き、/dev/dri/renderD128 を実際に使用する
-#   (Pi 3のVideoCore IVはOpenGL ES 3.0非対応のためES3コンテキスト生成の
-#   失敗ログが出るが、ES2へ自動フォールバックするため描画自体は動く)
-# --enable-zero-copy / --enable-gpu-rasterization: GPUラスタライズを有効化
+# Pi 3B+のGPU(VideoCore IV)を--use-angle=gl-eglで有効化すると、
+# 実機で確認したところレンダラープロセスが数十分おきにクラッシュする
+# (GPU-GLコンテキスト関連の--type=rendererクラッシュダンプを確認)。
+# GPU有効化前(このフラグが無い状態)ではこの種のクラッシュは発生して
+# いなかったため、--disable-gpuでソフトウェア描画に固定し安定性を
+# 優先する(描画は多少遅くなるが、クラッシュが直る)
 # --disable-smooth-scrolling: 慣性スクロール等の余計な演出を削って軽くする
 # --password-store=basic: 指定しないと初回起動時に「キーリングの
 # パスワードを設定してください」というダイアログが表示され、無人の
@@ -93,9 +89,7 @@ CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chrom
   --disable-restore-session-state \
   --check-for-update-interval=31536000 \
   --password-store=basic \
-  --use-angle=gl-egl \
-  --enable-gpu-rasterization \
-  --enable-zero-copy \
+  --disable-gpu \
   --disable-smooth-scrolling \
   "http://localhost:${HTTP_PORT}" &
 CHROMIUM_PID=$!

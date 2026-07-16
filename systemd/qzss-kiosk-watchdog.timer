@@ -1,0 +1,10 @@
+[Unit]
+Description=QZSS キオスク画面のレンダラークラッシュ監視(30秒おき)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=30s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
