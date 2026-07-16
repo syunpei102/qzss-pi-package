@@ -35,6 +35,7 @@ done
 for f in "$DIR"/systemd/*.timer; do
   sudo cp "$f" "/etc/systemd/system/$(basename "$f")"
 done
+sudo cp "$DIR/systemd/qzss-cpu-performance.service" "/etc/systemd/system/qzss-cpu-performance.service"
 
 echo "🔑 更新スクリプトがsudo無しでサービス再起動・本体再起動できるようにします"
 SUDOERS_LINE="$USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qzss-map@$USER_NAME, /usr/bin/systemctl restart qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-map@$USER_NAME qzss-decoder@$USER_NAME, /usr/bin/systemctl reboot"
@@ -58,6 +59,9 @@ sudo systemctl enable --now "qzss-report-status.timer"
 
 echo "☁️  クラウド死活監視タイマーを有効化します(30秒おき)"
 sudo systemctl enable --now "qzss-cloud-health-check.timer"
+
+echo "⚡ CPUガバナーをperformance(常時最大クロック)に固定します"
+sudo systemctl enable --now "qzss-cpu-performance.service"
 
 echo "🐕 ハードウェアウォッチドッグを設定します(OSごとフリーズした場合の自動電源再投入)"
 WATCHDOG_REBOOT_NEEDED=0

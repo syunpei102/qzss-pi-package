@@ -1,0 +1,11 @@
+[Unit]
+Description=QZSS キオスク用にCPUガバナーをperformanceに固定(常時最大クロック)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor'
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target
