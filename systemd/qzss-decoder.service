@@ -10,6 +10,11 @@ WorkingDirectory=/home/%i/qzss/qzss-pi-package
 # シリアルポート・送信先URL等は /home/%i/qzss/qzss-pi-package/qzss.env に書く
 # (このファイル自体はgit管理しない。環境ごとに内容が違うため)
 EnvironmentFile=/home/%i/qzss/qzss-pi-package/qzss.env
+# PYTHONUNBUFFERED: 指定しないとprint()の出力がバッファリングされ、
+# journalctlに反映されるまで大きく遅延する(TTY接続時は行バッファ、
+# systemd経由の非TTYではフルバッファになるため)。デバッグ時にログが
+# 「何も起きていないように見える」原因になるので必ず付ける
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/%i/qzss/qzss-pi-package/venv/bin/python3 read_legacy_dual.py ${QZSS_SERIAL_PORT} ${QZSS_BAUDRATE}
 Restart=on-failure
 RestartSec=5
