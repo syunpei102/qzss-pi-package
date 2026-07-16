@@ -81,6 +81,9 @@ CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chrom
 #   失敗ログが出るが、ES2へ自動フォールバックするため描画自体は動く)
 # --enable-zero-copy / --enable-gpu-rasterization: GPUラスタライズを有効化
 # --disable-smooth-scrolling: 慣性スクロール等の余計な演出を削って軽くする
+# --password-store=basic: 指定しないと初回起動時に「キーリングの
+# パスワードを設定してください」というダイアログが表示され、無人の
+# キオスク画面が固まって見えてしまう(実機で確認済み)
 "$CHROMIUM_BIN" \
   --kiosk \
   --incognito \
@@ -89,6 +92,7 @@ CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chrom
   --disable-session-crashed-bubble \
   --disable-restore-session-state \
   --check-for-update-interval=31536000 \
+  --password-store=basic \
   --use-angle=gl-egl \
   --enable-gpu-rasterization \
   --enable-zero-copy \
