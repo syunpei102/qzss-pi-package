@@ -312,12 +312,21 @@ def enqueue_send(payload, retryable=True):
         local_send_queue.put(payload)
 
 
-def route_report(params, category_key, is_test_data=False):
+def route_report(params, category_key, is_test_data=False, t0=None, t1=None):
     if is_test_data:
         params = dict(params)
         params["is_test_data"] = True
 
     if category_key in ("jalert", "lalert") or category_key in ALLOWED_CATEGORY_NOS:
+        # レイテンシ計測用(T0受信・T1デコード完了)。以降サーバー側で
+        # T2(受信)・T3(配信)、クライアント側でT4(描画完了)を追記し、
+        # 各段階の所要時間をログで可視化する
+        if t0 is not None and t1 is not None:
+            params = dict(params)
+            params["client_timestamps"] = {
+                "t0_received_ms": int(t0 * 1000),
+                "t1_decoded_ms": int(t1 * 1000),
+            }
         enqueue_send(params, retryable=True)
         print("🛰️ 地図へ送信キューに追加:", params.get("type"))
     else:
@@ -567,6 +576,11 @@ if __name__ == '__main__':
                             line += b
                         count += 1
 
+                    # T0: 信号受信(1メッセージ分のバイト列を読み終えた時刻)。
+                    # レイテンシ計測(T0受信→T1デコード→T2サーバー受信→
+                    # T3配信→T4描画完了)の起点
+                    t0_received = time.time()
+
                     if args.nmea and nmea_flag:
                         try:
                             sentence = line.decode().strip('\r\n')
@@ -583,6 +597,7 @@ if __name__ == '__main__':
                             if sentence is not None:
                                 print(sentence)
                                 params, key = decode_full(sentence)
+                                t1_decoded = time.time()  # T1: デコード完了
                                 note_satellite_seen(params)
                                 # 拠点に地域が割り当てられていて、かつこの通報が対象都道府県
                                 # 以外だけを対象にしている場合、ここで即座に処理を打ち切る
@@ -599,7 +614,7 @@ if __name__ == '__main__':
                                     print("(前回と同一内容のため送信スキップ)")
                                 else:
                                     recent_content_keys.append(dedup_key)
-                                    route_report(params, key)
+                                    route_report(params, key, t0=t0_received, t1=t1_decoded)
         except (serial.SerialException, OSError) as e:
             serial_ok.clear()
             print(f"⚠️ シリアル接続が切れました({e})。{RECONNECT_WAIT_SEC}秒後に再接続を試みます...")
