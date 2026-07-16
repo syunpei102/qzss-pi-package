@@ -102,15 +102,38 @@ git_commit() {
 GIT_COMMIT_MAP="$(git_commit "$MAP_DIR")"
 GIT_COMMIT_PI="$(git_commit "$PI_DIR")"
 
-# --- 温度チェック(閾値超過ならDiscordへ即通知) ---
+# --- 温度チェック(閾値超過を検知した最初の1回だけDiscordへ通知する。
+#     高い状態が続いている間、毎時間繰り返し通知しないよう、直前の
+#     状態をファイルに記録して「状態が変わった時だけ」通知する。
+#     warn→criticalへ悪化した場合は改めて通知し、閾値を下回ったら
+#     マーカーをリセットする(次に超えたらまた通知される)) ---
+TEMP_STATE_FILE="$STATE_DIR/temp_notify_state"
+last_temp_state="none"
+[ -f "$TEMP_STATE_FILE" ] && last_temp_state="$(cat "$TEMP_STATE_FILE")"
+
 if [ -n "$TEMPERATURE" ]; then
   temp_int="${TEMPERATURE%.*}"
   if [ "$temp_int" -ge "$TEMP_CRITICAL" ] 2>/dev/null; then
-    log "🚨 本体温度が危険域です: ${TEMPERATURE}℃"
-    notify_discord "🚨 本体温度が危険域です: ${TEMPERATURE}℃(閾値: ${TEMP_CRITICAL}℃)。サーマルスロットリングにより性能低下・不安定化のおそれがあります。設置場所の通気を確認してください。"
+    current_temp_state="critical"
   elif [ "$temp_int" -ge "$TEMP_WARN" ] 2>/dev/null; then
-    log "⚠️ 本体温度が高めです: ${TEMPERATURE}℃"
+    current_temp_state="warn"
+  else
+    current_temp_state="none"
   fi
+
+  if [ "$current_temp_state" != "none" ] && [ "$current_temp_state" != "$last_temp_state" ]; then
+    if [ "$current_temp_state" = "critical" ]; then
+      log "🚨 本体温度が危険域です: ${TEMPERATURE}℃"
+      notify_discord "🚨 本体温度が危険域です: ${TEMPERATURE}℃(閾値: ${TEMP_CRITICAL}℃)。サーマルスロットリングにより性能低下・不安定化のおそれがあります。設置場所の通気を確認してください。"
+    else
+      log "⚠️ 本体温度が高めです: ${TEMPERATURE}℃"
+      notify_discord "⚠️ 本体温度が高めです: ${TEMPERATURE}℃(閾値: ${TEMP_WARN}℃)。しばらく様子を見てください(温度が下がるか、危険域に達したら改めて通知します)。"
+    fi
+  elif [ "$current_temp_state" = "none" ] && [ "$last_temp_state" != "none" ]; then
+    log "✅ 本体温度が正常範囲に戻りました: ${TEMPERATURE}℃"
+  fi
+
+  echo "$current_temp_state" > "$TEMP_STATE_FILE"
 fi
 
 # --- 主要サービスの生存確認(念のための保険。本来はsystemdの
