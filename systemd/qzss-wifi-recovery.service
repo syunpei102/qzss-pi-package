@@ -1,0 +1,13 @@
+[Unit]
+Description=QZSS 起動時WiFi(wlan0)復旧チェック
+After=network-pre.target
+Before=network.target
+
+[Service]
+Type=oneshot
+User=%i
+WorkingDirectory=/home/%i/qzss/qzss-pi-package
+ExecStart=/home/%i/qzss/qzss-pi-package/wifi_recovery_check.sh
+
+[Install]
+WantedBy=multi-user.target
