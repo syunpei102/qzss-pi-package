@@ -1,0 +1,8 @@
+[Unit]
+Description=QZSS クラウド死活監視(軽量・高頻度)
+
+[Service]
+Type=oneshot
+User=%i
+WorkingDirectory=/home/%i/qzss/qzss-pi-package
+ExecStart=/home/%i/qzss/qzss-pi-package/cloud_health_check.sh
