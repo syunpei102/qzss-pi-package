@@ -185,11 +185,18 @@ rollback_repo() {
 
 log "=== 更新チェック開始 ==="
 
-updated=0
-update_repo "$MAP_DIR" && updated=1
-update_repo "$PI_DIR" && updated=1
+# それぞれのリポジトリが「今回の実行で実際に更新されたか」を個別に
+# 覚えておく(updatedをまとめて1つのフラグにしていた頃は、片方だけ
+# 更新された場合でも両方をロールバック対象にしてしまい、今回全く
+# 更新していない側まで、前回実行分の古い.prevファイルを使って誤って
+# 巻き戻してしまうバグがあった。OTAの自動ロールバックを意図的に
+# 壊れた更新でテストした際に実機で発見した)
+map_updated=0
+pi_updated=0
+update_repo "$MAP_DIR" && map_updated=1
+update_repo "$PI_DIR" && pi_updated=1
 
-if [ "$updated" -eq 0 ]; then
+if [ "$map_updated" -eq 0 ] && [ "$pi_updated" -eq 0 ]; then
   log "更新はありませんでした"
   exit 0
 fi
@@ -207,6 +214,10 @@ if health_check; then
       prev_rev="$(cat "$prev_file")"
       new_rev="$(cd "$repo_dir" && git rev-parse --short HEAD)"
       success_summary="${success_summary}"$'\n'"${repo_name}: ${prev_rev:0:7} → ${new_rev}"
+      # ロールバックが不要になったので.prevを消しておく。残したままだと
+      # 次回以降の実行で「今回は更新していないこのリポジトリ」まで、
+      # この古い.prevを使って誤ってロールバックされてしまう
+      rm -f "$prev_file"
     fi
   done
   notify_discord "✅ 更新を適用しました。${success_summary}"
@@ -216,13 +227,17 @@ fi
 
 log "❌ 更新後に地図アプリが応答しません。ロールバックします"
 notify_discord "更新後に地図アプリが応答しなくなったため、直前のコミットへロールバックを試みます。"
-rollback_repo "$MAP_DIR"
-rollback_repo "$PI_DIR"
+# 今回実際に更新したリポジトリだけをロールバック対象にする
+[ "$map_updated" -eq 1 ] && rollback_repo "$MAP_DIR"
+[ "$pi_updated" -eq 1 ] && rollback_repo "$PI_DIR"
 restart_services
 
 if health_check; then
   log "✅ ロールバック後、正常に起動していることを確認しました"
   notify_discord "ロールバックにより復旧しました。原因(新しいコミットの内容)を確認してください。\nログ: update_state/update_check.log"
+  # ロールバック完了後も.prevを掃除する(残っていると次回以降に誤爆する)
+  [ "$map_updated" -eq 1 ] && rm -f "$STATE_DIR/$(basename "$MAP_DIR").prev"
+  [ "$pi_updated" -eq 1 ] && rm -f "$STATE_DIR/$(basename "$PI_DIR").prev"
   record_last_known_good
 else
   log "🚨 ロールバック後も応答がありません。手動での確認が必要です"
