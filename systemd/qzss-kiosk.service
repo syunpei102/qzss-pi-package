@@ -33,9 +33,15 @@ Nice=-5
 # のみを表示するkioskなので、この安全性トレードオフは許容する)
 # --disable-background-networking / --disable-sync / --disable-features=...:
 # GoogleアカウントSync・翻訳・最適化ヒント等、kioskには不要な裏側の
-# ネットワーク通信・機能を止める(実機のログで無駄なGCM登録通信の
-# 失敗が出ていたのを解消する狙いもある)
-ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --use-angle=swiftshader --enable-unsafe-swiftshader --disable-smooth-scrolling --disable-background-networking --disable-sync --disable-client-side-phishing-detection --disable-default-apps --disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication http://localhost:8080'
+# ネットワーク通信・機能を止める。実機のログでGCM(プッシュ通知)登録の
+# 失敗("DEPRECATED_ENDPOINT"→"QUOTA_EXCEEDED")が繰り返し出ていたため、
+# --disable-notifications(Push/Notification API自体を無効化)と
+# --disable-features=GCM を追加した。ただしChromium側の既知の制約で
+# GCM関連の内部初期化自体は完全には止まらない場合がある(CEFプロジェクトの
+# 同種issueでも確立された完全な回避策は無いことを確認済み)。実害
+# (クラッシュ等)は無いログの汚染・わずかな無駄通信程度のため、
+# 完全に消えなくても許容する
+ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --use-angle=swiftshader --enable-unsafe-swiftshader --disable-smooth-scrolling --disable-background-networking --disable-sync --disable-notifications --disable-client-side-phishing-detection --disable-default-apps --disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication,GCM http://localhost:8080'
 Restart=on-failure
 RestartSec=5
 

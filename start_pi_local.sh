@@ -101,9 +101,10 @@ CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || echo chrom
   --disable-smooth-scrolling \
   --disable-background-networking \
   --disable-sync \
+  --disable-notifications \
   --disable-client-side-phishing-detection \
   --disable-default-apps \
-  --disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication \
+  --disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication,GCM \
   "http://localhost:${HTTP_PORT}" &
 CHROMIUM_PID=$!
 trap 'kill "$MAP_PID" "$CHROMIUM_PID" 2>/dev/null' EXIT
