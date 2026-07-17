@@ -19,6 +19,8 @@ EXPECTED_TITLE_PREFIX="QZSS"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 STATE_DIR="$DIR/update_state"
 LOG_FILE="$STATE_DIR/kiosk_watchdog.log"
+CRASH_COUNT_FILE="$STATE_DIR/kiosk_crash_dump_count"
+CRASH_REPORTS_DIR="$HOME/.config/chromium/Crash Reports/pending"
 mkdir -p "$STATE_DIR"
 
 export DISPLAY=:0
@@ -35,4 +37,22 @@ if [[ "$title" != "$EXPECTED_TITLE_PREFIX"* ]]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚨 想定外のタイトルを検知しました(\"$title\")。レンダラークラッシュとみなしChromiumを再起動します" \
     | tee -a "$LOG_FILE"
   sudo systemctl restart "qzss-kiosk@$(whoami).service"
+  exit 0
+fi
+
+# タイトルチェックだけでは不十分だと実機で判明した: レンダラーがクラッシュ
+# して「エラー コード: 11」のクラッシュ画面になっても、ウィンドウタイトル
+# は直前のページ("QZSS 災危通報マップ")のまま変わらないままだった
+# (スクリーンショットで実際に真っ暗+クラッシュ画面を確認)。そのため
+# Chromiumが自分で書き出すクラッシュダンプの件数を見て、前回チェック時
+# より増えていれば(タイトルが変わらない種類のクラッシュも含めて)検知する
+if [ -d "$CRASH_REPORTS_DIR" ]; then
+  current_count="$(find "$CRASH_REPORTS_DIR" -maxdepth 1 -name '*.dmp' 2>/dev/null | wc -l | tr -d ' ')"
+  last_count="$(cat "$CRASH_COUNT_FILE" 2>/dev/null || echo 0)"
+  if [ "$current_count" -gt "$last_count" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚨 新しいクラッシュダンプを検知しました(${last_count}→${current_count}件)。タイトルは正常に見えても実際にはクラッシュしていた可能性が高いため、Chromiumを再起動します" \
+      | tee -a "$LOG_FILE"
+    sudo systemctl restart "qzss-kiosk@$(whoami).service"
+  fi
+  echo "$current_count" > "$CRASH_COUNT_FILE"
 fi
