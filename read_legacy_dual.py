@@ -53,9 +53,42 @@ ALLOWED_CATEGORY_NOS = {1, 2, 3, 4, 5, 8, 9, 10, 11}
 # クラウドへの再送信をスキップする。
 # 判定にはデコード結果の raw(DCRメッセージ本体)を使う。プリアンブル(A/B/C)は
 # 送信ごとに巡回し、sentence / message / nmea は内容が同じでも毎回変わってしまうが、
-# raw はプリアンブル・CRC・衛星IDを含まないため、内容が同じなら常に一致する。
+# raw はプリアンブル・CRC・衛星IDを含まないため、内容が同じなら常に一致する…はずだった。
+# 実機でL-Alert訓練放送を確認したところ、rawの中身自体が再送のたびに変わっており
+# (おそらく仕様上のシーケンス番号等が埋め込まれている)、このバイト一致の判定を
+# すり抜けて数分おきに「新規」として送信され続けていた。地図側(map/server.js の
+# reportGroupKey、main.js の findMatchingGroup)には既に「災害種別+対象地域」による
+# 意味的な重複統合を実装済みだが、受信機側から見ても無駄な送信・ログの積み重ねに
+# なるため、同じ考え方の意味的キーで送信自体を間引く
 RECENT_CONTENT_HISTORY_SIZE = 50
 recent_content_keys = deque(maxlen=RECENT_CONTENT_HISTORY_SIZE)
+
+# 意味的に同一とみなせる通報の再送を、SEMANTIC_DEDUP_WINDOW_SEC以内なら
+# スキップする(それを過ぎたら「本当にまだ続いている」ことの確認も兼ねて
+# 送り直す。地図側のTTL安全策と極端にズレないよう、5分程度に留める)
+SEMANTIC_DEDUP_WINDOW_SEC = 5 * 60
+recent_semantic_sends = {}  # key -> 最終送信時刻(time.time())
+
+
+def semantic_dedup_key(params):
+    """map/server.js の reportGroupKey と同じ考え方: 災害種別+対象地域等で
+    「同じ通報の再送」を意味的に判定する(rawが再送ごとに変わる通報にも効く)。
+    判定できない場合はNoneを返し、呼び出し側はバイト一致の判定だけに頼る。"""
+    report_type = params.get("type")
+    if report_type == "QzssDcxLAlert":
+        hazard = params.get("a4_hazard_type") or ""
+        area = params.get("ex1_target_area_code_raw")
+        if area is not None:
+            return f"lalert|{hazard}|ex1:{area}"
+        centre = params.get("a12_ellipse_centre_latitude")
+        if centre is not None:
+            return f"lalert|{hazard}|ellipse:{centre:.2f},{params.get('a13_ellipse_centre_longitude', 0):.2f}"
+        return None
+    if report_type == "QzssDcxJAlert":
+        hazard = params.get("a4_hazard_type") or ""
+        areas = ",".join(sorted(params.get("ex9_target_area_list_ja") or []))
+        return f"jalert|{hazard}|{areas}"
+    return None
 
 CLOUD_URL = os.environ.get("QZSS_CLOUD_URL", "").strip()
 # 設定するとCLOUD_URLに加えてこちらへも同時送信する(例: ラズパイ本体で
@@ -610,10 +643,22 @@ if __name__ == '__main__':
                                 # raw(プリアンブル・CRC・衛星IDを含まない本体)で重複判定する。
                                 # sentence はプリアンブルが送信ごとに巡回して毎回変わるため使えない。
                                 dedup_key = params.get("raw") or sentence
+                                sem_key = semantic_dedup_key(params)
+                                now = time.time()
+                                sem_recent = (
+                                    sem_key is not None
+                                    and sem_key in recent_semantic_sends
+                                    and now - recent_semantic_sends[sem_key] < SEMANTIC_DEDUP_WINDOW_SEC
+                                )
                                 if dedup_key in recent_content_keys:
                                     print("(前回と同一内容のため送信スキップ)")
+                                elif sem_recent:
+                                    print(f"(意味的に同一の通報が{int(now - recent_semantic_sends[sem_key])}秒前に送信済みのためスキップ: {sem_key})")
+                                    recent_content_keys.append(dedup_key)
                                 else:
                                     recent_content_keys.append(dedup_key)
+                                    if sem_key is not None:
+                                        recent_semantic_sends[sem_key] = now
                                     route_report(params, key, t0=t0_received, t1=t1_decoded)
         except (serial.SerialException, OSError) as e:
             serial_ok.clear()
