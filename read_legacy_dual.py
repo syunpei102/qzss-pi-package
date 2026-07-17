@@ -75,7 +75,7 @@ def semantic_dedup_key(params):
     「同じ通報の再送」を意味的に判定する(rawが再送ごとに変わる通報にも効く)。
     判定できない場合はNoneを返し、呼び出し側はバイト一致の判定だけに頼る。"""
     report_type = params.get("type")
-    if report_type == "QzssDcxLAlert":
+    if report_type in ("QzssDcxLAlert", "QzssDcxMTInfo"):
         hazard = params.get("a4_hazard_type") or ""
         area = params.get("ex1_target_area_code_raw")
         if area is not None:
@@ -220,7 +220,15 @@ def decode_full(sentence):
     params["description"] = str(report)
     if params.get("dcx_message_type") == "J-Alert":
         return params, "jalert"
-    if params.get("dcx_message_type") == "L-Alert":
+    # "L-Alert"(a3=1、消防庁経由の標準配信)と"Information from Local
+    # Government"(a3=4、自治体からの直接配信。QzssDcxMTInfo)はフィールド
+    # 構成が完全に同一(azarashi側でも両方ともQzssDcXtendedMessageBaseの
+    # 単純なサブクラスで追加フィールドが無い)。当初は"L-Alert"だけを
+    # 見ていたため、自治体が直接テスト配信した通報がここで弾かれ
+    # (キーがNoneになりroute_reportの許可リストに乗らず送信スキップ)、
+    # 実際に地域情報が入っているのに地図に何も描画されない不具合になって
+    # いた(奈良県十津川村の実例で発覚)
+    if params.get("dcx_message_type") in ("L-Alert", "Information from Local Government"):
         # ex1(市区町村コード)の生の数値はget_params()には含まれないが、
         # 都道府県への対応付け(コード÷1000の整数部=JIS都道府県コード=
         # prefectures.geojsonのidと同じ)に使うため、report内部のcamfから
