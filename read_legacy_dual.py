@@ -166,6 +166,59 @@ def region_config_refresh_loop():
         time.sleep(REGION_REFRESH_INTERVAL_SEC)
 
 
+# ==================================================
+# 訓練放送表示設定(Discordの/set_training_broadcasts)のローカル同期
+#
+# Discordの操作はCloud Run(公開URL)の/discord/interactionsにしか届かず、
+# ローカルkiosk(QZSS_LOCAL_URL)は完全に別インスタンスなので何も知らない。
+# region_config_refresh_loopと同じ「クラウドを定期ポーリングし、変化が
+# あればローカルへ反映」パターンで、ローカルkiosk表示にも(数分程度の
+# 遅延はあるが)Discordでの操作を届かせる。QZSS_LOCAL_URLが設定されて
+# いない(=ローカルkioskを併用していない)場合は何もしない
+# ==================================================
+TRAINING_BROADCAST_REFRESH_INTERVAL_SEC = 2 * 60
+last_known_show_training_broadcasts = None  # None=未取得
+
+
+def _local_base_url():
+    return LOCAL_URL[: -len("/ingest")] if LOCAL_URL.endswith("/ingest") else LOCAL_URL
+
+
+def _sync_training_broadcasts_once():
+    global last_known_show_training_broadcasts
+    url = f"{_cloud_base_url()}/config?device={urllib.parse.quote(DEVICE_ID, safe='')}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        enabled = bool(data.get("showTrainingBroadcasts", True))
+    except Exception as e:
+        print(f"⚠️ 訓練放送表示設定の取得に失敗しました(次回また試します): {e}")
+        return
+    if enabled == last_known_show_training_broadcasts:
+        return
+    try:
+        req = urllib.request.Request(
+            f"{_local_base_url()}/local-sync/training-broadcasts",
+            data=json.dumps({"enabled": enabled}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+        last_known_show_training_broadcasts = enabled
+        print(f"🔁 訓練放送表示設定をローカルkioskに反映しました: {enabled}")
+    except Exception as e:
+        print(f"⚠️ 訓練放送表示設定のローカル反映に失敗しました(次回また試します): {e}")
+
+
+def training_broadcast_sync_loop():
+    if not LOCAL_URL:
+        return
+    while True:
+        _sync_training_broadcasts_once()
+        time.sleep(TRAINING_BROADCAST_REFRESH_INTERVAL_SEC)
+
+
 def is_in_scope(params):
     """拠点に地域が割り当てられている場合、対象外の都道府県だけの通報を
     除外する。対象都道府県が判別できない通報(震源のみ・津波・Jアラート等)
@@ -565,6 +618,7 @@ if __name__ == '__main__':
     threading.Thread(target=send_heartbeat_loop, daemon=True).start()
     threading.Thread(target=send_test_signal_loop, daemon=True).start()
     threading.Thread(target=region_config_refresh_loop, daemon=True).start()
+    threading.Thread(target=training_broadcast_sync_loop, daemon=True).start()
 
     RECONNECT_WAIT_SEC = 5
     IDLE_TIMEOUT_SEC = 20
