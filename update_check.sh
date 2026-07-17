@@ -79,6 +79,16 @@ restart_services() {
   if printf '%s' "$unit_files" | grep -q "qzss-map@"; then
     log "サービスを再起動します(qzss-map, qzss-decoder)"
     sudo systemctl restart "qzss-map@$(whoami)" "qzss-decoder@$(whoami)" 2>&1 | tee -a "$LOG_FILE"
+    # qzss-map/qzss-decoderを再起動しても、キオスクのChromiumは既存タブに
+    # 古いpublic/main.js等をメモリ上に持ったまま動き続ける(ブラウザは
+    # サーバー側ファイルの更新を勝手に検知して再読み込みはしない)。
+    # クライアント側の修正が実機に反映されないまま「更新は成功した」と
+    # 誤認する事故が実際に起きたため、キオスク表示側も必ず再起動して
+    # ページを読み込み直させる
+    if printf '%s' "$unit_files" | grep -q "qzss-kiosk@"; then
+      log "キオスク表示(Chromium)を再起動します(qzss-kiosk)"
+      sudo systemctl restart "qzss-kiosk@$(whoami)" 2>&1 | tee -a "$LOG_FILE"
+    fi
   else
     log "⚠️ systemdサービスが見つからないため、再起動はスキップします(手動再起動が必要です)"
   fi
