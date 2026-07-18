@@ -41,7 +41,16 @@ Nice=-5
 # 同種issueでも確立された完全な回避策は無いことを確認済み)。実害
 # (クラッシュ等)は無いログの汚染・わずかな無駄通信程度のため、
 # 完全に消えなくても許容する
-ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --use-angle=swiftshader --enable-unsafe-swiftshader --disable-smooth-scrolling --disable-background-networking --disable-sync --disable-notifications --disable-client-side-phishing-detection --disable-default-apps --disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication,GCM http://localhost:8080'
+# --js-flags="--max-old-space-size=128": Pi 3B+(実質855MB)はChromium
+# だけで427〜742MBを使うことがあり常にメモリが逼迫している。V8のJS
+# ヒープ上限を明示的に絞ることで、フレッシュ起動75秒後のRSSが実測で
+# 742MB→655MB程度に下がることを確認した(ただし計測ごとの振れ幅が
+# 大きいシステムなので目安程度)。なお同時に試した
+# BackForwardCache/サイト分離無効化・Vulkan無効化・raster-threads削減
+# の組み合わせは逆にメモリ使用量を増やしてしまい(427MB→660〜730MB)
+# 却下した。Chromiumのフラグはこの機体では直感に反する結果になることが
+# あるため、変更する際は1つずつ実測で検証すること
+ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --use-angle=swiftshader --enable-unsafe-swiftshader --disable-smooth-scrolling --disable-background-networking --disable-sync --disable-notifications --disable-client-side-phishing-detection --disable-default-apps --js-flags="--max-old-space-size=128" --disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication,GCM http://localhost:8080'
 Restart=on-failure
 RestartSec=5
 
