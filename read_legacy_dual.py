@@ -222,13 +222,34 @@ def training_broadcast_sync_loop():
 def is_in_scope(params):
     """拠点に地域が割り当てられている場合、対象外の都道府県だけの通報を
     除外する。対象都道府県が判別できない通報(震源のみ・津波・Jアラート等)
-    は現行通り常に処理する。"""
+    は現行通り常に処理する(誤って重要な情報をブロックするより、対象外の
+    情報が多少混ざる方が安全、というfail-open方針)。
+    以前は震度速報等が持つ prefectures_raw(都道府県IDそのもの)しか
+    見ておらず、気象警報(weather_forecast_regions_raw)・降灰
+    (local_governments_raw)は別のフィールド名・別のコード体系のため
+    地域ロックが一切効いていなかった(実機で確認: 関東限定の拠点に鳥取県・
+    富山県の気象警報が素通りしていた)。この2種別は都道府県IDへの変換方法が
+    単純(コードの上位桁がJIS都道府県コードと一致)なので、同様にチェックする。
+    EEW(eew_forecast_regions_raw、予報区コード)と洪水(flood_forecast_
+    regions_raw、河川コード。1つの河川が複数県にまたがりうる)は単純な
+    都道府県ID変換ができないため、従来通りfail-open(絞り込みなし)のまま。"""
     if allowed_prefecture_ids is None:
         return True
     prefs = params.get("prefectures_raw")
-    if not prefs:
-        return True
-    return any(p in allowed_prefecture_ids for p in prefs)
+    if prefs:
+        return any(p in allowed_prefecture_ids for p in prefs)
+    # 気象警報の地域コードは6桁で、上位2桁(万の位から上)がJIS都道府県コード
+    # (map/public/main.jsのregionDisplayNameと同じ導出方法: code // 10000)
+    weather_codes = params.get("weather_forecast_regions_raw")
+    if weather_codes:
+        return any((c // 10000) in allowed_prefecture_ids for c in weather_codes)
+    # 降灰の対象市区町村コードは7桁の全国地方公共団体コードで、上位2桁が
+    # JIS都道府県コード(map/public/main.jsのbuildEventFromOtherCategoryと
+    # 同じ導出方法: code // 100000)
+    gov_codes = params.get("local_governments_raw")
+    if gov_codes:
+        return any((c // 100000) in allowed_prefecture_ids for c in gov_codes)
+    return True
 
 # 直近に受信できた通報がどの衛星からのものだったかを覚えておき、ハートビートに
 # 乗せて送る。個々の災危通報は特定カテゴリ(重要/注意情報)しかクラウドへ送らない
