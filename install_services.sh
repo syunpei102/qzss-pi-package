@@ -38,7 +38,7 @@ done
 sudo cp "$DIR/systemd/qzss-cpu-performance.service" "/etc/systemd/system/qzss-cpu-performance.service"
 
 echo "🔑 更新スクリプトがsudo無しでサービス再起動・本体再起動できるようにします"
-SUDOERS_LINE="$USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qzss-map@$USER_NAME, /usr/bin/systemctl restart qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-map@$USER_NAME qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-kiosk@$USER_NAME, /usr/bin/systemctl reboot, /sbin/modprobe -r brcmfmac brcmfmac_cyw brcmutil, /sbin/modprobe brcmfmac"
+SUDOERS_LINE="$USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qzss-map@$USER_NAME, /usr/bin/systemctl restart qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-map@$USER_NAME qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-kiosk@$USER_NAME, /usr/bin/systemctl reboot, /usr/bin/systemctl restart lightdm, /sbin/modprobe -r brcmfmac brcmfmac_cyw brcmutil, /sbin/modprobe brcmfmac"
 echo "$SUDOERS_LINE" | sudo tee "/etc/sudoers.d/qzss-update" > /dev/null
 sudo chmod 440 /etc/sudoers.d/qzss-update
 sudo visudo -c -f /etc/sudoers.d/qzss-update
