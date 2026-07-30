@@ -155,32 +155,6 @@ check_and_heal_service() {
 check_and_heal_service "qzss-map@${SERVICE_USER}.service"
 check_and_heal_service "qzss-decoder@${SERVICE_USER}.service"
 
-# 稼働状況ダッシュボード(status.html)の「解析(デコード)処理」表示用に、
-# 上の自動復旧を試みた後の最終状態を送る(復旧できていれば true になる)
-QZSS_MAP_ACTIVE="false"
-systemctl is-active --quiet "qzss-map@${SERVICE_USER}.service" && QZSS_MAP_ACTIVE="true"
-QZSS_DECODER_ACTIVE="false"
-systemctl is-active --quiet "qzss-decoder@${SERVICE_USER}.service" && QZSS_DECODER_ACTIVE="true"
-
-# --- 受信機(アンテナ)がデコードした件数・エラー件数(read_legacy_dual.pyが
-#     ~/.qzss_decode_stats.jsonへ書き出す。プロセス起動からの累計で、
-#     クラウド側が/ingestで受け取る件数(対象外カテゴリ・重複排除後)より
-#     実際の受信状況を正確に表す) ---
-DECODE_STATS_PATH="$HOME/.qzss_decode_stats.json"
-DECODE_TOTAL="null"
-DECODE_ERRORS="null"
-if [ -f "$DECODE_STATS_PATH" ]; then
-  if command -v jq > /dev/null 2>&1; then
-    DECODE_TOTAL="$(jq -r '.total // "null"' "$DECODE_STATS_PATH" 2>/dev/null || echo null)"
-    DECODE_ERRORS="$(jq -r '.errors // "null"' "$DECODE_STATS_PATH" 2>/dev/null || echo null)"
-  else
-    DECODE_TOTAL="$(grep -o '"total":[0-9]*' "$DECODE_STATS_PATH" | head -1 | grep -o '[0-9]*$')"
-    DECODE_ERRORS="$(grep -o '"errors":[0-9]*' "$DECODE_STATS_PATH" | head -1 | grep -o '[0-9]*$')"
-    DECODE_TOTAL="${DECODE_TOTAL:-null}"
-    DECODE_ERRORS="${DECODE_ERRORS:-null}"
-  fi
-fi
-
 # --- qzss-mapが実際にHTTP応答するか確認する(上のcheck_and_heal_serviceは
 #     「systemdがactiveと言っているか」しか見ないため、プロセスは起動して
 #     いても中身が壊れていて応答しないケースを検知できない)。
@@ -264,11 +238,7 @@ payload=$(cat <<JSON
   "uptime_sec": ${UPTIME_SEC:-null},
   "disk_free_pct": ${DISK_FREE_PCT:-null},
   "git_commit_map": "${GIT_COMMIT_MAP}",
-  "git_commit_pi": "${GIT_COMMIT_PI}",
-  "qzss_map_active": ${QZSS_MAP_ACTIVE},
-  "qzss_decoder_active": ${QZSS_DECODER_ACTIVE},
-  "decode_total": ${DECODE_TOTAL},
-  "decode_errors": ${DECODE_ERRORS}
+  "git_commit_pi": "${GIT_COMMIT_PI}"
 }
 JSON
 )
