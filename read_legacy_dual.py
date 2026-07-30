@@ -266,6 +266,42 @@ def note_satellite_seen(params):
         last_satellite_seen["satellite_prn"] = params.get("satellite_prn")
 
 
+# ==================================================
+# デコード成功/失敗の統計(稼働状況ダッシュボード用)
+#
+# クラウド側が/ingestで受け取れる件数(Heartbeat+実際に転送された通報)は
+# 「アンテナが衛星から受信した生データの件数」そのものではない
+# (対象外カテゴリ・重複排除で大半がPi側のこの時点で止まり、クラウドへは
+# 送られないため)。実際の受信・デコード状況を見るには、この受信ループが
+# 処理した総件数とエラー件数をPi側で数え、report_status.sh(1時間おき)
+# 経由でクラウドへ送るしかない。プロセス再起動でリセットされる
+# (uptime_secと同じく「起動してからの累計」という分かりやすい区切りに
+# するため、あえて永続化しない)
+DECODE_STATS_PATH = os.path.expanduser("~/.qzss_decode_stats.json")
+decode_stats = {"total": 0, "errors": 0}
+decode_stats_lock = threading.Lock()
+
+
+def _persist_decode_stats():
+    try:
+        with open(DECODE_STATS_PATH, "w", encoding="utf-8") as f:
+            json.dump(decode_stats, f)
+    except OSError:
+        pass
+
+
+def note_decode_result(params):
+    is_error = params.get("type") == "DecodeError"
+    with decode_stats_lock:
+        decode_stats["total"] += 1
+        if is_error:
+            decode_stats["errors"] += 1
+        # 毎回ファイルI/Oすると受信のたびに書き込みが発生してしまうため、
+        # エラー発生時(すぐ気づけるように)と、一定件数おきだけ書き出す
+        if is_error or decode_stats["total"] % 20 == 0:
+            _persist_decode_stats()
+
+
 def _jsonify(value):
     if isinstance(value, datetime.datetime):
         return value.isoformat()
@@ -715,6 +751,7 @@ if __name__ == '__main__':
                                 params, key = decode_full(sentence)
                                 t1_decoded = time.time()  # T1: デコード完了
                                 note_satellite_seen(params)
+                                note_decode_result(params)
                                 # 拠点に地域が割り当てられていて、かつこの通報が対象都道府県
                                 # 以外だけを対象にしている場合、ここで即座に処理を打ち切る
                                 # (「送信しない」のではなく、重複排除の登録も含めて
