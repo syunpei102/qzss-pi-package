@@ -41,6 +41,23 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
 }
 
+# コミットハッシュ(例: 761f1b3)は技術者以外には何のことか分からないため、
+# VERSIONファイルがあればそちらの番号(例: ver1.0 → ver1.1)で表示する。
+# qzss-mapにはVERSIONファイルがあるが、qzss-pi-package(拠点の制御
+# プログラム、ユーザーが直接バージョンを意識する機会が少ない)には無いため、
+# そちらは従来通り短縮ハッシュ表示にフォールバックする
+format_update_range() {
+  local repo_dir="$1" old_rev="$2" new_rev="$3"
+  local old_version new_version
+  old_version="$(cd "$repo_dir" && git show "$old_rev:VERSION" 2>/dev/null)"
+  new_version="$(cd "$repo_dir" && git show "$new_rev:VERSION" 2>/dev/null)"
+  if [ -n "$old_version" ] && [ -n "$new_version" ]; then
+    echo "ver${old_version} → ver${new_version}"
+  else
+    echo "${old_rev:0:7} → ${new_rev:0:7}"
+  fi
+}
+
 # 更新の成功・失敗・ロールバック等をDiscordに通知する(Discordが
 # デバイス操作・状態確認の主な窓口になったため、更新が無かった場合を
 # 除き結果は毎回通知する)
@@ -49,7 +66,7 @@ notify_discord() {
   [ -z "${DISCORD_WEBHOOK_URL:-}" ] && return 0
   local hostname_str full_text
   hostname_str="$(hostname)"
-  full_text="🚨 QZSS OTA更新 (${hostname_str})
+  full_text="🚨 QZSS 更新 (${hostname_str})
 ${message}"
   # jqがあれば安全にJSONエスケープする。無ければ最低限(バックスラッシュ・
   # ダブルクォート・改行)だけ手動エスケープするフォールバックにする
@@ -131,7 +148,7 @@ update_repo() {
     return 1
   fi
 
-  log "🆕 $name に更新があります: ${local_rev:0:7} → ${remote_rev:0:7}"
+  log "🆕 $name に更新があります: $(format_update_range "$repo_dir" "$local_rev" "$remote_rev")"
   echo "$local_rev" > "$STATE_DIR/$name.prev"
 
   local before_pkg before_req
@@ -176,9 +193,10 @@ rollback_repo() {
     return 1
   fi
 
-  local prev_rev
+  local prev_rev current_rev
   prev_rev="$(cat "$prev_file")"
-  log "⏪ $name を ${prev_rev:0:7} にロールバックします"
+  current_rev="$(cd "$repo_dir" && git rev-parse HEAD)"
+  log "⏪ $name をロールバックします: $(format_update_range "$repo_dir" "$current_rev" "$prev_rev")"
   cd "$repo_dir" || return 1
   git reset --hard "$prev_rev" --quiet 2>&1 | tee -a "$LOG_FILE"
 }
@@ -213,7 +231,7 @@ if health_check; then
     if [ -f "$prev_file" ]; then
       prev_rev="$(cat "$prev_file")"
       new_rev="$(cd "$repo_dir" && git rev-parse --short HEAD)"
-      success_summary="${success_summary}"$'\n'"${repo_name}: ${prev_rev:0:7} → ${new_rev}"
+      success_summary="${success_summary}"$'\n'"${repo_name}: $(format_update_range "$repo_dir" "$prev_rev" "$new_rev")"
       # ロールバックが不要になったので.prevを消しておく。残したままだと
       # 次回以降の実行で「今回は更新していないこのリポジトリ」まで、
       # この古い.prevを使って誤ってロールバックされてしまう
