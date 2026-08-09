@@ -97,6 +97,10 @@ CLOUD_URL = os.environ.get("QZSS_CLOUD_URL", "").strip()
 LOCAL_URL = os.environ.get("QZSS_LOCAL_URL", "").strip()
 TOKEN = os.environ.get("QZSS_INGEST_TOKEN", "").strip()
 DEVICE_ID = os.environ.get("QZSS_DEVICE_ID", "").strip() or socket.gethostname()
+# デフォルトでは無効(ラズパイ本番のログ出力量を変えないため)。手元での
+# 動作確認用(map_macbook等)にデコード結果(params)の中身を丸ごと
+# ターミナルに流したい場合だけ QZSS_VERBOSE_DECODE=1 を設定する
+VERBOSE_DECODE = os.environ.get("QZSS_VERBOSE_DECODE", "").strip() == "1"
 
 HEARTBEAT_INTERVAL_SEC = 30
 serial_ok = threading.Event()
@@ -714,6 +718,8 @@ if __name__ == '__main__':
                                 print(sentence)
                                 params, key = decode_full(sentence)
                                 t1_decoded = time.time()  # T1: デコード完了
+                                if VERBOSE_DECODE:
+                                    print(json.dumps(params, ensure_ascii=False, indent=2, default=str))
                                 note_satellite_seen(params)
                                 # 拠点に地域が割り当てられていて、かつこの通報が対象都道府県
                                 # 以外だけを対象にしている場合、ここで即座に処理を打ち切る
