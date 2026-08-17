@@ -1,0 +1,12 @@
+[Unit]
+Description=QZSS キオスク画面の定期リロード(毎晩・低負荷な時間帯)
+
+[Timer]
+# 毎日4時に実行(更新チェック(3時)とは別枠にして重ならないようにする)。
+# RandomizedDelaySecで多少ばらつかせる
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target

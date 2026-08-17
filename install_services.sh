@@ -28,7 +28,7 @@ for f in "$DIR"/systemd/qzss-map.service "$DIR"/systemd/qzss-decoder.service "$D
   name="$(basename "$f" .service)"
   sudo cp "$f" "/etc/systemd/system/${name}@.service"
 done
-for f in "$DIR"/systemd/qzss-update-check.service "$DIR"/systemd/qzss-urgent-check.service "$DIR"/systemd/qzss-report-status.service "$DIR"/systemd/qzss-cloud-health-check.service "$DIR"/systemd/qzss-kiosk-watchdog.service "$DIR"/systemd/qzss-wifi-recovery.service; do
+for f in "$DIR"/systemd/qzss-update-check.service "$DIR"/systemd/qzss-urgent-check.service "$DIR"/systemd/qzss-report-status.service "$DIR"/systemd/qzss-cloud-health-check.service "$DIR"/systemd/qzss-kiosk-watchdog.service "$DIR"/systemd/qzss-kiosk-daily-reload.service "$DIR"/systemd/qzss-wifi-recovery.service; do
   name="$(basename "$f")"
   sed "s/%i/$USER_NAME/g" "$f" | sudo tee "/etc/systemd/system/$name" > /dev/null
 done
@@ -68,6 +68,9 @@ sudo systemctl enable --now "qzss-cpu-performance.service"
 
 echo "🖥️  キオスクのレンダラークラッシュ監視タイマーを有効化します(30秒おき)"
 sudo systemctl enable --now "qzss-kiosk-watchdog.timer"
+
+echo "🔄 キオスクの定期リロードタイマーを有効化します(毎晩4時。クラッシュしないまま機能が徐々に壊れる問題の予防)"
+sudo systemctl enable --now "qzss-kiosk-daily-reload.timer"
 
 echo "📶 起動時WiFi復旧チェックを有効化します(wlan0が無ければドライバ再読み込みを試みる)"
 sudo systemctl enable --now "qzss-wifi-recovery.service"
