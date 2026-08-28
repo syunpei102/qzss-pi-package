@@ -53,6 +53,29 @@ if [ -d "$CRASH_REPORTS_DIR" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚨 新しいクラッシュダンプを検知しました(${last_count}→${current_count}件)。タイトルは正常に見えても実際にはクラッシュしていた可能性が高いため、Chromiumを再起動します" \
       | tee -a "$LOG_FILE"
     sudo systemctl restart "qzss-kiosk@$(whoami).service"
+    echo "$current_count" > "$CRASH_COUNT_FILE"
+    exit 0
   fi
   echo "$current_count" > "$CRASH_COUNT_FILE"
+fi
+
+# タイトル・クラッシュダンプ件数のどちらも変化しないクラッシュがある
+# ことも実機で判明した: レンダラー(描画プロセス、`--type=renderer`)が
+# メモリ不足等で死んで消えたまま二度と生成されず、親ウィンドウのタイトル
+# だけ直前の正常な値を保持し続け、crashpadへのダンプ書き込みも行われない
+# ケース(エラーコード11の画面のまま8時間以上気付かれず放置された)。
+# rendererプロセスの有無を直接確認し、無ければ再起動する。サービス起動
+# 直後はrendererがまだ生成される前の一瞬0件になり得るため、起動から
+# 一定時間(STARTUP_GRACE_SEC)経過したときだけ対象にする
+STARTUP_GRACE_SEC=30
+kiosk_started_at="$(systemctl show -p ActiveEnterTimestamp --value "qzss-kiosk@$(whoami).service" 2>/dev/null)"
+kiosk_started_epoch="$(date -d "$kiosk_started_at" +%s 2>/dev/null || echo 0)"
+now_epoch="$(date +%s)"
+if [ "$kiosk_started_epoch" -gt 0 ] && [ $((now_epoch - kiosk_started_epoch)) -ge "$STARTUP_GRACE_SEC" ]; then
+  renderer_count="$(pgrep -f -- '--type=renderer' | wc -l | tr -d ' ')"
+  if [ "$renderer_count" -eq 0 ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚨 描画プロセス(renderer)が存在しません。タイトル・クラッシュダンプ件数のどちらも変化しないタイプのクラッシュとみなし、Chromiumを再起動します" \
+      | tee -a "$LOG_FILE"
+    sudo systemctl restart "qzss-kiosk@$(whoami).service"
+  fi
 fi
