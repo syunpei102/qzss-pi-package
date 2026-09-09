@@ -280,7 +280,18 @@ for cmd in $commands; do
       ;;
     force_update_check)
       log "🔍 管理サイトからの更新確認コマンドを受信しました"
-      "$DIR/update_check.sh"
+      # update_check.sh自体は「更新が見つかった場合」しかDiscordへ通知
+      # しない(毎晩3時の定時チェックで「更新なし」を毎回通知すると
+      # スパムになるため)。しかしDiscordコマンドで明示的に確認を要求
+      # した場合は、「更新なしだった」という結果自体も知りたいはずなので、
+      # ここ(手動要求の経路)でだけ、更新が無かった場合の完了通知を
+      # 追加する(更新が有った場合はupdate_check.sh自身が既に通知済み
+      # なので、二重に通知しない)
+      update_output="$("$DIR/update_check.sh")"
+      echo "$update_output"
+      if echo "$update_output" | grep -q "更新はありませんでした"; then
+        notify_discord "✅ 更新確認を実行しました。更新はありませんでした(既に最新版です)。"
+      fi
       ;;
     *)
       log "⚠️ 未対応のコマンドを受信しました: $cmd"
