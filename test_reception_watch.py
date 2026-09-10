@@ -75,6 +75,18 @@ def run():
     acts, st = rw.decide(age=rw.STALE_SEC + 10, state=st, now=t5 + 200)
     check("notify" in actions_of(acts) and st["state"] == "unstable", "回復後の再途絶で再び不安定検知")
 
+    # 10) 境界値: age == STALE_SEC はまだ正常(以下は許容)
+    acts, st = rw.decide(age=rw.STALE_SEC, state=dict(rw.DEFAULT_STATE), now=2000)
+    check(acts == [] and st["state"] == "ok", "age==STALE_SECはまだ正常とみなす")
+
+    # 11) 境界値: age == STALE_SEC + 1 は不安定
+    acts, st = rw.decide(age=rw.STALE_SEC + 1, state=dict(rw.DEFAULT_STATE), now=2000)
+    check("notify" in actions_of(acts) and st["state"] == "unstable", "age==STALE_SEC+1は不安定と判定する")
+
+    # 12) age=0(受信直後)は正常
+    acts, st = rw.decide(age=0, state=dict(rw.DEFAULT_STATE), now=2000)
+    check(acts == [] and st["state"] == "ok", "age=0は正常")
+
     print("\n" + ("🎉 全テスト成功" if not FAILS else "❌ 失敗 {} 件: {}".format(len(FAILS), FAILS)))
     return 0 if not FAILS else 1
 

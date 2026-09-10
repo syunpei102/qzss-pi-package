@@ -95,7 +95,7 @@ restart_services() {
   unit_files="$(systemctl list-unit-files 2>/dev/null)"
   if printf '%s' "$unit_files" | grep -q "qzss-map@"; then
     log "サービスを再起動します(qzss-map, qzss-decoder)"
-    sudo systemctl restart "qzss-map@$(whoami)" "qzss-decoder@$(whoami)" 2>&1 | tee -a "$LOG_FILE"
+    sudo systemctl restart "qzss-map@$(whoami)" "qzss-decoder@$(whoami)" 2>&1 | tee -a "$LOG_FILE" || return 1
     # qzss-map/qzss-decoderを再起動しても、キオスクのChromiumは既存タブに
     # 古いpublic/main.js等をメモリ上に持ったまま動き続ける(ブラウザは
     # サーバー側ファイルの更新を勝手に検知して再読み込みはしない)。
@@ -107,7 +107,8 @@ restart_services() {
       sudo systemctl restart "qzss-kiosk@$(whoami)" 2>&1 | tee -a "$LOG_FILE"
     fi
   else
-    log "⚠️ systemdサービスが見つからないため、再起動はスキップします(手動再起動が必要です)"
+    log "⚠️ systemdサービスが見つかりません．手動確認が必要です"
+    return 1
   fi
 }
 
@@ -116,7 +117,8 @@ restart_services() {
 health_check() {
   local tries=10
   for i in $(seq 1 "$tries"); do
-    if curl -fs "http://localhost:${HTTP_PORT}/" > /dev/null 2>&1; then
+    if curl --max-time 5 -fs "http://localhost:${HTTP_PORT}/" > /dev/null 2>&1 \
+      && systemctl is-active --quiet "qzss-decoder@$(whoami).service"; then
       return 0
     fi
     sleep 2
@@ -124,6 +126,15 @@ health_check() {
   return 1
 }
 
+install_node_dependencies() {
+  if [ -f package-lock.json ]; then
+    npm ci --omit=dev 2>&1 | tee -a "$LOG_FILE"
+  else
+    npm install --omit=dev 2>&1 | tee -a "$LOG_FILE"
+  fi
+}
+
+# 戻り値：0=更新成功，1=変更なし，2=変更前の失敗，3=変更後の失敗．
 # 1つのリポジトリを更新する。更新した場合は0(更新あり)、
 # 更新が無かった場合は1を返す。ロールバック用に更新前のコミットを
 # $STATE_DIR/<リポジトリ名>.prev に記録する
@@ -137,33 +148,33 @@ update_repo() {
     return 1
   fi
 
-  cd "$repo_dir" || return 1
-  git fetch origin main --quiet 2>&1 | tee -a "$LOG_FILE"
+  cd "$repo_dir" || return 2
+  git fetch origin main --quiet 2>&1 | tee -a "$LOG_FILE" || return 2
 
   local local_rev remote_rev
-  local_rev="$(git rev-parse HEAD)"
-  remote_rev="$(git rev-parse origin/main)"
+  local_rev="$(git rev-parse HEAD)" || return 2
+  remote_rev="$(git rev-parse origin/main)" || return 2
 
   if [ "$local_rev" = "$remote_rev" ]; then
     return 1
   fi
 
   log "🆕 $name に更新があります: $(format_update_range "$repo_dir" "$local_rev" "$remote_rev")"
-  echo "$local_rev" > "$STATE_DIR/$name.prev"
+  echo "$local_rev" > "$STATE_DIR/$name.prev" || return 2
 
   local before_pkg before_req
-  before_pkg="$( [ -f package.json ] && md5sum package.json || true)"
+  before_pkg="$(md5sum package.json package-lock.json 2>/dev/null || true)"
   before_req="$( [ -f requirements.txt ] && md5sum requirements.txt || true)"
 
-  git reset --hard origin/main --quiet 2>&1 | tee -a "$LOG_FILE"
+  git reset --hard origin/main --quiet 2>&1 | tee -a "$LOG_FILE" || return 3
 
-  if [ -f package.json ] && [ "$before_pkg" != "$(md5sum package.json)" ]; then
+  if [ -f package.json ] && [ "$before_pkg" != "$(md5sum package.json package-lock.json 2>/dev/null || true)" ]; then
     log "📦 package.json が変わったため npm install します($name)"
-    npm install --omit=dev 2>&1 | tee -a "$LOG_FILE"
+    install_node_dependencies || return 3
   fi
   if [ -f requirements.txt ] && [ "$before_req" != "$(md5sum requirements.txt)" ]; then
     log "🐍 requirements.txt が変わったため pip install します($name)"
-    ./venv/bin/pip install -q -r requirements.txt 2>&1 | tee -a "$LOG_FILE"
+    ./venv/bin/pip install -q -r requirements.txt 2>&1 | tee -a "$LOG_FILE" || return 3
   fi
 
   return 0
@@ -198,7 +209,13 @@ rollback_repo() {
   current_rev="$(cd "$repo_dir" && git rev-parse HEAD)"
   log "⏪ $name をロールバックします: $(format_update_range "$repo_dir" "$current_rev" "$prev_rev")"
   cd "$repo_dir" || return 1
-  git reset --hard "$prev_rev" --quiet 2>&1 | tee -a "$LOG_FILE"
+  git reset --hard "$prev_rev" --quiet 2>&1 | tee -a "$LOG_FILE" || return 1
+  # コードだけでなく，更新途中で変わった依存関係も戻す．
+  if [ -f package.json ]; then install_node_dependencies || return 1; fi
+  if [ -f requirements.txt ]; then
+    ./venv/bin/pip install -q -r requirements.txt 2>&1 | tee -a "$LOG_FILE" || return 1
+  fi
+  return 0
 }
 
 log "=== 更新チェック開始 ==="
@@ -211,18 +228,39 @@ log "=== 更新チェック開始 ==="
 # 壊れた更新でテストした際に実機で発見した)
 map_updated=0
 pi_updated=0
-update_repo "$MAP_DIR" && map_updated=1
-update_repo "$PI_DIR" && pi_updated=1
+update_failed=0
+update_repo "$MAP_DIR"
+map_result=$?
+case "$map_result" in
+  0) map_updated=1 ;;
+  3) map_updated=1; update_failed=1 ;;
+  2) update_failed=1 ;;
+esac
+if [ "$update_failed" -eq 0 ]; then
+  update_repo "$PI_DIR"
+  pi_result=$?
+  case "$pi_result" in
+    0) pi_updated=1 ;;
+    3) pi_updated=1; update_failed=1 ;;
+    2) update_failed=1 ;;
+  esac
+fi
 
 if [ "$map_updated" -eq 0 ] && [ "$pi_updated" -eq 0 ]; then
+  if [ "$update_failed" -ne 0 ]; then
+    log "❌ 更新の取得に失敗しました"
+    exit 1
+  fi
   log "更新はありませんでした"
   exit 0
 fi
 
-restart_services
+if [ "$update_failed" -eq 0 ]; then
+  restart_services || update_failed=1
+fi
 
 log "⏳ 起動確認中…"
-if health_check; then
+if [ "$update_failed" -eq 0 ] && health_check; then
   log "✅ 更新を適用し、正常に起動していることを確認しました"
   success_summary=""
   for repo_dir in "$MAP_DIR" "$PI_DIR"; do
@@ -246,11 +284,12 @@ fi
 log "❌ 更新後に地図アプリが応答しません。ロールバックします"
 notify_discord "更新後に地図アプリが応答しなくなったため、直前のコミットへロールバックを試みます。"
 # 今回実際に更新したリポジトリだけをロールバック対象にする
-[ "$map_updated" -eq 1 ] && rollback_repo "$MAP_DIR"
-[ "$pi_updated" -eq 1 ] && rollback_repo "$PI_DIR"
-restart_services
+rollback_failed=0
+if [ "$map_updated" -eq 1 ]; then rollback_repo "$MAP_DIR" || rollback_failed=1; fi
+if [ "$pi_updated" -eq 1 ]; then rollback_repo "$PI_DIR" || rollback_failed=1; fi
+restart_services || rollback_failed=1
 
-if health_check; then
+if [ "$rollback_failed" -eq 0 ] && health_check; then
   log "✅ ロールバック後、正常に起動していることを確認しました"
   notify_discord "ロールバックにより復旧しました。原因(新しいコミットの内容)を確認してください。\nログ: update_state/update_check.log"
   # ロールバック完了後も.prevを掃除する(残っていると次回以降に誤爆する)
@@ -261,3 +300,6 @@ else
   log "🚨 ロールバック後も応答がありません。手動での確認が必要です"
   notify_discord "⚠️ ロールバックしても地図アプリが復旧しません。至急、実機の確認をお願いします。"
 fi
+
+# 更新自体は失敗しているため，復旧しても呼び出し元へ非0で通知する．
+exit 1

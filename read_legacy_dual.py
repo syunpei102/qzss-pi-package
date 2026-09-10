@@ -36,7 +36,6 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from collections import deque
 from functools import reduce
 
 import azarashi
@@ -61,13 +60,13 @@ ALLOWED_CATEGORY_NOS = {1, 2, 3, 4, 5, 6, 8, 9, 10, 11}  # 6=北西太平洋津�
 # 意味的な重複統合を実装済みだが、受信機側から見ても無駄な送信・ログの積み重ねに
 # なるため、同じ考え方の意味的キーで送信自体を間引く
 RECENT_CONTENT_HISTORY_SIZE = 50
-recent_content_keys = deque(maxlen=RECENT_CONTENT_HISTORY_SIZE)
+recent_content_keys = {}  # key -> (content, monotonic time)
 
 # 意味的に同一とみなせる通報の再送を、SEMANTIC_DEDUP_WINDOW_SEC以内なら
 # スキップする(それを過ぎたら「本当にまだ続いている」ことの確認も兼ねて
 # 送り直す。地図側のTTL安全策と極端にズレないよう、5分程度に留める)
 SEMANTIC_DEDUP_WINDOW_SEC = 5 * 60
-recent_semantic_sends = {}  # key -> 最終送信時刻(time.time())
+
 
 
 def semantic_dedup_key(params):
@@ -89,6 +88,30 @@ def semantic_dedup_key(params):
         areas = ",".join(sorted(params.get("ex9_target_area_list_ja") or []))
         return f"jalert|{hazard}|{areas}"
     return None
+
+
+def is_recent_duplicate(params, sentence, now=None):
+    """同じ対象の最後の内容だけを期限付きで比較する．解除後の再発表も通す．"""
+    now = time.monotonic() if now is None else now
+    group = semantic_dedup_key(params)
+    if group is not None:
+        # 電文表現・受信時刻・衛星の違いを除き，状態・深刻度・範囲・本文を比較する．
+        volatile = {"raw", "message", "sentence", "nmea", "camf", "description",
+                    "timestamp", "client_timestamps", "satellite_id", "satellite_prn"}
+        content = json.dumps({k: v for k, v in params.items() if k not in volatile},
+                             sort_keys=True, ensure_ascii=False, default=str)
+        key = "semantic:" + group
+    else:
+        content = params.get("raw") or sentence
+        key = "raw:" + content
+    previous = recent_content_keys.get(key)
+    if previous and previous[0] == content and now - previous[1] < SEMANTIC_DEDUP_WINDOW_SEC:
+        return True
+    recent_content_keys.pop(key, None)
+    recent_content_keys[key] = (content, now)
+    while len(recent_content_keys) > RECENT_CONTENT_HISTORY_SIZE:
+        recent_content_keys.pop(next(iter(recent_content_keys)))
+    return False
 
 CLOUD_URL = os.environ.get("QZSS_CLOUD_URL", "").strip()
 # 設定するとCLOUD_URLに加えてこちらへも同時送信する(例: ラズパイ本体で
@@ -221,6 +244,50 @@ def training_broadcast_sync_loop():
     while True:
         _sync_training_broadcasts_once()
         time.sleep(TRAINING_BROADCAST_REFRESH_INTERVAL_SEC)
+
+
+# ==================================================
+# Lアラート解析(表示・通知)ON/OFF設定(Discordの/set_lalert)のローカル同期
+#
+# training_broadcast_sync_loopと全く同じパターン。
+# ==================================================
+LALERT_REFRESH_INTERVAL_SEC = 2 * 60
+last_known_lalert_enabled = None  # None=未取得
+
+
+def _sync_lalert_enabled_once():
+    global last_known_lalert_enabled
+    url = f"{_cloud_base_url()}/config?device={urllib.parse.quote(DEVICE_ID, safe='')}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        enabled = bool(data.get("lalertEnabled", True))
+    except Exception as e:
+        print(f"⚠️ Lアラート表示設定の取得に失敗しました(次回また試します): {e}")
+        return
+    if enabled == last_known_lalert_enabled:
+        return
+    try:
+        req = urllib.request.Request(
+            f"{_local_base_url()}/local-sync/lalert",
+            data=json.dumps({"enabled": enabled}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+        last_known_lalert_enabled = enabled
+        print(f"🔁 Lアラート表示設定をローカルkioskに反映しました: {enabled}")
+    except Exception as e:
+        print(f"⚠️ Lアラート表示設定のローカル反映に失敗しました(次回また試します): {e}")
+
+
+def lalert_sync_loop():
+    if not LOCAL_URL:
+        return
+    while True:
+        _sync_lalert_enabled_once()
+        time.sleep(LALERT_REFRESH_INTERVAL_SEC)
 
 
 def is_in_scope(params):
@@ -375,7 +442,10 @@ class Sender:
                 self.conn.request("POST", self.path, body=data, headers=headers)
                 resp = self.conn.getresponse()
                 resp.read()
-                return True
+                if 200 <= resp.status < 300:
+                    return True
+                print(f"⚠️ HTTP送信失敗: {self.host} status={resp.status}")
+                return False
             except Exception as e:
                 if self.conn is not None:
                     self.conn.close()
@@ -644,6 +714,7 @@ if __name__ == '__main__':
     threading.Thread(target=send_test_signal_loop, daemon=True).start()
     threading.Thread(target=region_config_refresh_loop, daemon=True).start()
     threading.Thread(target=training_broadcast_sync_loop, daemon=True).start()
+    threading.Thread(target=lalert_sync_loop, daemon=True).start()
 
     RECONNECT_WAIT_SEC = 5
     IDLE_TIMEOUT_SEC = 20
@@ -731,23 +802,9 @@ if __name__ == '__main__':
                                     continue
                                 # raw(プリアンブル・CRC・衛星IDを含まない本体)で重複判定する。
                                 # sentence はプリアンブルが送信ごとに巡回して毎回変わるため使えない。
-                                dedup_key = params.get("raw") or sentence
-                                sem_key = semantic_dedup_key(params)
-                                now = time.time()
-                                sem_recent = (
-                                    sem_key is not None
-                                    and sem_key in recent_semantic_sends
-                                    and now - recent_semantic_sends[sem_key] < SEMANTIC_DEDUP_WINDOW_SEC
-                                )
-                                if dedup_key in recent_content_keys:
-                                    print("(前回と同一内容のため送信スキップ)")
-                                elif sem_recent:
-                                    print(f"(意味的に同一の通報が{int(now - recent_semantic_sends[sem_key])}秒前に送信済みのためスキップ: {sem_key})")
-                                    recent_content_keys.append(dedup_key)
+                                if is_recent_duplicate(params, sentence):
+                                    print("(期限内の同一内容のため送信スキップ)")
                                 else:
-                                    recent_content_keys.append(dedup_key)
-                                    if sem_key is not None:
-                                        recent_semantic_sends[sem_key] = now
                                     route_report(params, key, t0=t0_received, t1=t1_decoded)
         except (serial.SerialException, OSError) as e:
             serial_ok.clear()

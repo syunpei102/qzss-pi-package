@@ -62,6 +62,16 @@ def run():
           "洪水(河川コードは都道府県に単純変換できないためfail-open)")
     check(m.is_in_scope({}) is True, "空データは常に通す")
 
+    # --- 空リストはfail-open(値が無いのと同じ扱いで次のフィールドを見る) ---
+    check(m.is_in_scope({"prefectures_raw": []}) is True,
+          "prefectures_rawが空リストならfail-open(除外ではない)")
+    check(m.is_in_scope({"prefectures_raw": [], "weather_forecast_regions_raw": [tottori_weather]}) is False,
+          "prefectures_rawが空なら気象警報のフィールドまでフォールバックして判定する")
+
+    # --- 優先順位: prefectures_rawがあれば他フィールドより優先される ---
+    check(m.is_in_scope({"prefectures_raw": [43], "weather_forecast_regions_raw": [tokyo_weather]}) is False,
+          "prefectures_rawがあれば対象外(熊本県)と判定され、他フィールドの東京都は見ない")
+
     m.allowed_prefecture_ids = None  # 他のテストに影響しないよう元に戻す
 
     print("\n" + ("🎉 全テスト成功" if not FAILS else "❌ 失敗 {} 件: {}".format(len(FAILS), FAILS)))
