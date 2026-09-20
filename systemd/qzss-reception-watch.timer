@@ -1,0 +1,12 @@
+[Unit]
+Description=QZSS 受信監視(30秒おき)
+
+[Timer]
+OnBootSec=2min
+# 衛星データの途絶は数分でも取りこぼしにつながるため30秒間隔を維持する。
+# 判定は journalctl を1回読むだけの軽い処理
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

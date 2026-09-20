@@ -27,6 +27,9 @@ HTTP_PORT="${HTTP_PORT:-8080}"
 STATE_DIR="$DIR/update_state"
 LOG_FILE="$STATE_DIR/update_check.log"
 mkdir -p "$STATE_DIR"
+# shellcheck disable=SC1091
+source "$DIR/lib_log.sh"
+rotate_log "$LOG_FILE"
 
 # qzss.env に DISCORD_WEBHOOK_URL 等を書いている場合はここで読み込む
 # (systemdサービス経由でも手動実行でも同じように効くようにする)
@@ -40,6 +43,17 @@ fi
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
 }
+
+# OTAは同時に1つだけ実行する(タイマー・緊急チェック・Discordの更新確認コマンドが
+# 重なると，リポジトリの強制更新・npm/pip install・サービス再起動・ロールバックが
+# 競合して壊れた状態になり得る)。ロックはプロセス終了時に自動で解放される。
+# 他が実行中なら，失敗ではなく「使用中」を表す終了コード75で終わる
+LOCK_FILE="$STATE_DIR/update.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  log "⏭️ 別の更新処理が実行中のため，今回はスキップします"
+  exit 75
+fi
 
 # コミットハッシュ(例: 761f1b3)は技術者以外には何のことか分からないため、
 # VERSIONファイルがあればそちらの番号(例: ver1.0 → ver1.1)で表示する。
@@ -218,6 +232,36 @@ rollback_repo() {
   return 0
 }
 
+# リポジトリの systemd/ の変更(新しいタイマー・ユニット内容の修正・廃止)を実機へ反映する。
+# ユニットの配置とenableは，install_services.shが root 所有で配置した専用ヘルパー
+# (sudoersで許可済み)に任せる。ヘルパーは全ユニットを検証してから1つずつ原子的に
+# 差し替える。反映後に daemon-reload し，変更されたユニットをenableする。
+# ヘルパーが未導入の端末(install_services.shを再実行していない)では警告のみ。
+UNIT_HELPER="${QZSS_UNIT_HELPER:-/usr/local/sbin/qzss-unit-helper}"
+sync_systemd_units() {
+  [ -d "$PI_DIR/systemd" ] || return 0
+  if [ ! -x "$UNIT_HELPER" ]; then
+    log "⚠️ $UNIT_HELPER が無いためsystemdユニットは反映しません(install_services.shの再実行が必要です)"
+    return 0
+  fi
+  local result changed_units
+  result="$(sudo -n "$UNIT_HELPER" install "$PI_DIR/systemd" 2>&1)" || {
+    log "❌ systemdユニットの配置に失敗しました: $result"
+    return 1
+  }
+  [ -n "$result" ] || return 0
+  log "🧩 systemdユニットを更新しました: $(printf '%s' "$result" | tr '\n' ' ')"
+  sudo -n systemctl daemon-reload 2>&1 | tee -a "$LOG_FILE"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || { log "❌ systemctl daemon-reload に失敗しました"; return 1; }
+  changed_units="$(printf '%s\n' "$result" | awk '$1=="changed"{print $2}')"
+  if [ -n "$changed_units" ]; then
+    # shellcheck disable=SC2086
+    sudo -n "$UNIT_HELPER" enable $changed_units 2>&1 | tee -a "$LOG_FILE"
+    [ "${PIPESTATUS[0]}" -eq 0 ] || { log "❌ 変更したユニットのenableに失敗しました"; return 1; }
+  fi
+  return 0
+}
+
 log "=== 更新チェック開始 ==="
 
 # それぞれのリポジトリが「今回の実行で実際に更新されたか」を個別に
@@ -255,6 +299,9 @@ if [ "$map_updated" -eq 0 ] && [ "$pi_updated" -eq 0 ]; then
   exit 0
 fi
 
+if [ "$update_failed" -eq 0 ] && [ "$pi_updated" -eq 1 ]; then
+  sync_systemd_units || update_failed=1
+fi
 if [ "$update_failed" -eq 0 ]; then
   restart_services || update_failed=1
 fi
@@ -286,7 +333,11 @@ notify_discord "更新後に地図アプリが応答しなくなったため、�
 # 今回実際に更新したリポジトリだけをロールバック対象にする
 rollback_failed=0
 if [ "$map_updated" -eq 1 ]; then rollback_repo "$MAP_DIR" || rollback_failed=1; fi
-if [ "$pi_updated" -eq 1 ]; then rollback_repo "$PI_DIR" || rollback_failed=1; fi
+if [ "$pi_updated" -eq 1 ]; then
+  rollback_repo "$PI_DIR" || rollback_failed=1
+  # ユニットも元のコミットの内容へ戻す
+  sync_systemd_units || rollback_failed=1
+fi
 restart_services || rollback_failed=1
 
 if [ "$rollback_failed" -eq 0 ] && health_check; then

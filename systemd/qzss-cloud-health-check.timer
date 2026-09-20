@@ -1,12 +1,14 @@
 [Unit]
-Description=QZSS クラウド死活監視(30秒おき)
+Description=QZSS クラウド死活監視(2分おき)
 
 [Timer]
-OnBootSec=30s
-OnUnitActiveSec=30s
-# systemdタイマーは既定でAccuracySec=1分の"まとめ実行"猶予を持つため、
-# 指定してもズレる(実測30〜58秒)。正確に30秒間隔にするため厳密化する
-AccuracySec=1s
+OnBootSec=2min
+# 30秒おきだと1日2880回のcurl(Cloud Runへのリクエスト・Pi CPU・通信)に
+# なる。ハートビート自体が30秒おきにクラウドへ届いているため，この監視は
+# 「Cloud Runが外から見えるか」の補助であり，2分間隔で十分。
+# AccuracySecを広げて他タイマーとまとめて起動できるようにする
+OnUnitActiveSec=2min
+AccuracySec=15s
 
 [Install]
 WantedBy=timers.target

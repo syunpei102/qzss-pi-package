@@ -48,9 +48,14 @@ git pull
 実行後、対象ユニットが有効化されているか確認する:
 
 ```
-systemctl is-enabled qzss-report-status.timer
-systemctl is-enabled qzss-map.service qzss-decoder.service
+systemctl is-enabled qzss-report-status.timer qzss-reception-watch.timer qzss-cpu-governor.service
+systemctl is-enabled "qzss-map@$(whoami).service" "qzss-decoder@$(whoami).service"
 ```
+
+`qzss-map` / `qzss-decoder` / `qzss-kiosk` はテンプレートユニット(`name@<ユーザー名>.service`)
+として配置される。`qzss-map.service` のような`@`なしの名前は存在しないので使わないこと。
+OTAで`systemd/`が変わった場合の反映には、root所有ヘルパー
+`/usr/local/sbin/qzss-unit-helper` とsudoersが必要(この手順の`install_services.sh`が導入する)。
 
 ## 1. `qzss-report-status.timer` が動いているか
 
@@ -60,7 +65,8 @@ systemctl list-timers qzss-report-status.timer
 ```
 
 `Active: active (waiting)` になっていること。`OnBootSec=2min` なので、
-起動後2分以内に初回実行されるはず。
+起動後2分以内に初回実行され、以後 `OnUnitActiveSec=5min` で5分おきに実行される
+(リモートコマンドの最大遅延は約5分)。
 
 ## 2. 手動で1回発火させ、ログにエラーが無いか
 
@@ -90,7 +96,7 @@ Web管理画面が無効化されているため、まずはこのエンドポ�
 3. `journalctl -u qzss-report-status.service -n 50` に再起動コマンドを
    受け取ったログが出ているか
 4. 実際に実機が再起動されるか(`uptime` がリセットされるか)
-5. 再起動後、`qzss-map.service` / `qzss-decoder.service` が自動的に
+5. 再起動後、`qzss-map@<ユーザー名>.service` / `qzss-decoder@<ユーザー名>.service` が自動的に
    立ち上がっているか(`systemctl status`)
 6. 再起動完了後の次回`report_status.sh`実行で、Discordに
    「✅ 再起動が完了しました」の通知が届くか(`report_status.sh`の
@@ -112,39 +118,99 @@ Web管理画面が無効化されているため、まずはこのエンドポ�
 ## 6. クラッシュループ耐性の確認
 
 ```
-sudo systemctl stop qzss-map.service
+sudo systemctl stop "qzss-map@$(whoami).service"
 ```
 
 の状態でしばらく待ち(次回の `report_status.sh` 実行まで)、以下を確認:
 
-- `report_status.sh` が停止を検知し `sudo systemctl restart qzss-map.service`
-  を試みているか(ログに残る)
+- `report_status.sh` が停止を検知し `sudo systemctl restart qzss-map@<ユーザー名>`(`.service`なし。sudoers定義と
+  完全一致する形)を試みているか(ログに残る)
 - 復旧に失敗した場合のみDiscordへ通知が飛ぶか(`DISCORD_WEBHOOK_URL` を
   設定している場合)
 - 復旧に成功した場合はDiscord通知が飛ばない(正常系なので静かなままで
   良い)ことも合わせて確認
 
-## 6.5 OTA以外のタイミングでの自動ロールバックの確認
+## 6.5 OTA以外のタイミングでの自動ロールバックの確認(非破壊)
 
 `report_status.sh`は、OTA更新の直後だけでなく**毎回の実行時にqzss-mapへ
 実際にHTTP応答があるか**を確認する。応答が無ければ再起動→それでも
 直らなければ最後に動作確認できた安定版(`update_state/qzss-map.last_good`)
-へ自動的に切り替える、という保険が入っている。以下で確認する:
+へ自動的に切り替える、という保険が入っている。
 
-1. `cat update_state/qzss-map.last_good` で安定版のコミットが記録されて
-   いることを確認(通常運用で一度でも正常に動いていれば記録される)
-2. 意図的に`qzss-map`のコードを壊す(例: `~/qzss/qzss-map`で
-   `git commit --allow-empty -m test`してから、動かないコードに書き換えて
-   コミット、またはpackage.jsonを壊す等)
-3. `sudo systemctl restart qzss-map@$(whoami)`で反映させ、次回の
-   `report_status.sh`実行(または手動実行)を待つ
-4. ログ(`update_state/report_status.log`)に「HTTP応答しません」
-   →「再起動を試みます」→(直らなければ)「安定版へ切り替えます」の
-   流れが記録され、実際に`git log`のHEADが安定版のコミットに戻っている
-   ことを確認
-5. 復旧後、Discordに「🚨 ...安定版へ自動的に切り替えて復旧しました」の
-   通知が届くことを確認
-6. 確認後、壊したコミットは削除するか`git reset --hard`で元に戻しておく
+**稼働中のcheckoutは壊さない・`git reset --hard`もしない。** 使い捨ての一時cloneと、
+`sudo`/`systemctl`を記録だけするスタブで、ロールバックの流れだけを確認する:
+
+```bash
+T="$(mktemp -d)"
+git clone -q ~/qzss/qzss-pi-package "$T/qzss-pi-package"
+git clone -q ~/qzss/qzss-map "$T/qzss-map"
+mkdir -p "$T/bin" "$T/qzss-pi-package/update_state"
+# sudo/systemctlはコマンドを記録するだけ(本番サービスは再起動されない)
+printf '#!/bin/sh\necho "STUB sudo $*" >> "%s/stub.log"\n' "$T" > "$T/bin/sudo"
+printf '#!/bin/sh\necho "STUB systemctl $*" >> "%s/stub.log"\nexit 0\n' "$T" > "$T/bin/systemctl"
+chmod +x "$T/bin/sudo" "$T/bin/systemctl"
+# 安定版=現在のHEAD。一時clone側だけ空コミットを積み、ロールバックで戻ることを見る
+git -C "$T/qzss-map" rev-parse HEAD > "$T/qzss-pi-package/update_state/qzss-map.last_good"
+git -C "$T/qzss-pi-package" rev-parse HEAD > "$T/qzss-pi-package/update_state/qzss-pi-package.last_good"
+git -C "$T/qzss-map" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "temp change"
+# 誰も待ち受けていないポートを見に行かせ、Cloud/Discordへは送らない
+env -u QZSS_CLOUD_URL -u DISCORD_WEBHOOK_URL PATH="$T/bin:$PATH" HTTP_PORT=59999 \
+  MAP_DIR="$T/qzss-map" "$T/qzss-pi-package/report_status.sh"
+```
+
+1. `$T/qzss-pi-package/update_state/report_status.log` に「HTTP応答しません」
+   →「再起動を試みます」→「安定版 ... へ切り替えます」の流れが記録されること
+   (待ち受けの無いポートなので最終的に「応答なし」となるのは想定どおり)
+2. `git -C "$T/qzss-map" rev-parse HEAD` が `qzss-map.last_good` の値に戻っていること
+3. `$T/stub.log` に `STUB sudo systemctl restart qzss-map@...` が記録されていること
+4. 稼働中の `~/qzss/qzss-map` / `~/qzss/qzss-pi-package` の `git rev-parse HEAD` が
+   実行前と変わっていないこと、本番の `qzss-map@` が再起動されていないこと
+5. 後片付け: `rm -rf "$T"`
+
+実サービスでのエンドツーエンド(Discord通知まで)を確認したい場合は、上と同じ一時cloneで
+`DISCORD_WEBHOOK_URL` だけをテスト用チャンネルにして実行する。稼働中のコードを
+壊す手順は使わない。
+
+## 6.6 状態報告の途絶とオフライン遷移(管理側, qzss-map #23)
+
+サーバーは最後の状態報告から15分(5分×3回)以上途絶えた拠点をオフライン扱いにする。
+
+1. 管理サイトの拠点一覧(`/admin/api/devices` の `online`、またはDiscordの状態表示)で
+   対象拠点がオンラインであることを確認する
+2. `sudo systemctl stop qzss-report-status.timer` で報告を止め、**10分後もまだオンライン**
+   (2回の欠落は許容)、**15分を過ぎるとオフライン**になることを確認する
+3. `sudo systemctl start qzss-report-status.timer` で戻し、次回報告(数分以内)で
+   オンラインへ復帰することを確認する
+
+## 6.7 受信監視(reception watchdog)
+
+```bash
+systemctl list-timers qzss-reception-watch.timer      # 30秒おきに動いている
+systemctl cat qzss-reception-watch.service | grep QZSS_DECODER_UNIT   # qzss-decoder@<ユーザー名>
+sudo systemctl start qzss-reception-watch.service
+journalctl -u qzss-reception-watch.service -n 20 --no-pager   # age=... state=ok
+cat update_state/reception_state.json
+```
+
+`state=ok` であること。途絶時の復旧動作(USBリセット→デコーダ再起動→物理対応要請)は、
+保守時間帯に限り `sudo systemctl stop "qzss-decoder@$(whoami).service"` で90秒以上
+受信を止めて確認する(**その間は受信が止まる**ので通常運用中は行わない)。
+確認後は `sudo systemctl start "qzss-decoder@$(whoami).service"` で戻し、
+「受信回復」の通知が届くことを確認する。`journalctl`が読めない等の判定不能時は
+復旧動作を起こさない(何も実行されない)ことも`journalctl -u qzss-reception-watch`で確認できる。
+
+## 6.8 CPUガバナーとloopback待ち受け
+
+```bash
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor   # ondemand(performanceではない)
+systemctl status qzss-cpu-governor.service
+systemctl status qzss-cpu-performance.service              # 「could not be found」なら旧ユニット削除済み
+ss -ltnp | grep ':8080'                                     # 127.0.0.1:8080 だけ(0.0.0.0/[::]ではない)
+curl -fsS -m 5 http://localhost:8080/ -o /dev/null && echo local-ok
+```
+
+同じLAN上の別端末から `curl -m 5 http://<ラズパイのIP>:8080/` が**接続拒否/タイムアウト**
+になること。キオスク表示(localhost)は従来どおり表示されること。
 
 ## 7. ハードウェアウォッチドッグの確認
 

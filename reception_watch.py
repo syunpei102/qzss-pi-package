@@ -75,13 +75,20 @@ def last_valid_age(now=None):
     if now is None:
         now = time.time()
     try:
-        out = subprocess.run(
+        result = subprocess.run(
             ["journalctl", "-u", DECODER_UNIT, "--since", LOOKBACK, "-o", "short-unix", "--no-pager"],
             capture_output=True, text=True, timeout=20,
-        ).stdout
+        )
     except Exception as e:
         print("journalctl failed:", e, file=sys.stderr)
         return None
+    if result.returncode != 0:
+        # 権限不足・ジャーナル破損等で読めなかっただけで，受信が途絶したわけではない。
+        # 空出力を「有効文ゼロ=長時間の途絶」と誤判定して不要な復旧を走らせない
+        print("journalctl exited with {}: {}".format(result.returncode, (result.stderr or "").strip()),
+              file=sys.stderr)
+        return None
+    out = result.stdout
     last_ts = None
     for line in out.splitlines():
         if "QZQSM" in line:
@@ -115,7 +122,7 @@ def notify(msg):
     url = read_env("DISCORD_WEBHOOK_URL")
     if not url:
         print("DISCORD_WEBHOOK_URL 未設定のため通知スキップ:", msg, file=sys.stderr)
-        return
+        return False
     content = "📡 QZSS 受信監視 ({})\n{}".format(socket.gethostname(), msg)
     data = json.dumps({"content": content}).encode()
     try:
@@ -126,8 +133,10 @@ def notify(msg):
             "User-Agent": "qzss-reception-watch/1.0 (+https://eq.shum10.com)",
         })
         urllib.request.urlopen(req, timeout=15)
+        return True
     except Exception as e:
         print("Discord通知に失敗:", e, file=sys.stderr)
+        return False
 
 
 def usb_reset():
@@ -169,12 +178,18 @@ def usb_reset():
 
 
 def restart_decoder():
+    """受信機(デコーダ)サービスを再起動する。systemctlが失敗したらFalse。"""
     try:
-        subprocess.run(["systemctl", "restart", DECODER_UNIT], timeout=40, check=False)
-        return True
+        result = subprocess.run(["systemctl", "restart", DECODER_UNIT],
+                                capture_output=True, text=True, timeout=40)
     except Exception as e:
         print("デコーダ再起動に失敗:", e, file=sys.stderr)
         return False
+    if result.returncode != 0:
+        print("デコーダ再起動に失敗 (exit {}): {}".format(result.returncode, (result.stderr or "").strip()),
+              file=sys.stderr)
+        return False
+    return True
 
 
 def decide(age, state, now):
@@ -224,18 +239,40 @@ def decide(age, state, now):
     return actions, s
 
 
+def apply_actions(actions, old_state, new_state, runners=None):
+    """decide()が返したアクションを実行し，最終的に保存するstateを返す。
+    decide()は「実行する前提」でクールダウン用の時刻・回数を進めた状態を返すため，
+    外部コマンドが失敗したアクションについては，その分を元に戻す(失敗を成功扱いして
+    クールダウンだけ残すと，次の復旧機会が数分間失われる)。再起動が失敗したときは
+    直後の「再起動しました」通知も送らず，失敗を通知する。"""
+    runners = runners or {"notify": notify, "usb_reset": usb_reset, "restart": restart_decoder}
+    state = dict(new_state)
+    skip_next_notify = False
+    for kind, arg in actions:
+        if kind == "notify":
+            if skip_next_notify:
+                skip_next_notify = False
+                continue
+            runners["notify"](arg)
+        elif kind == "usb_reset":
+            if not runners["usb_reset"]():
+                # 試行回数は数えるが(効かないなら受信機再起動へ進むため)，
+                # クールダウンは残さず次回すぐ再試行できるようにする
+                state["last_reset"] = old_state.get("last_reset", 0)
+        elif kind == "restart":
+            if not runners["restart"]():
+                state["last_restart"] = old_state.get("last_restart", 0)
+                skip_next_notify = True
+                runners["notify"]("❌ 受信機(デコーダ)の自動再起動に失敗しました。次回の監視で再試行します。")
+    return state
+
+
 def main():
     now = time.time()
     age = last_valid_age(now)
     state = load_state()
     actions, new_state = decide(age, state, now)
-    for kind, arg in actions:
-        if kind == "notify":
-            notify(arg)
-        elif kind == "usb_reset":
-            usb_reset()
-        elif kind == "restart":
-            restart_decoder()
+    new_state = apply_actions(actions, state, new_state)
     save_state(new_state)
     age_str = "n/a" if age is None else "{:.0f}s".format(age)
     print("age={} state={} actions={}".format(age_str, new_state["state"], [a[0] for a in actions]))
