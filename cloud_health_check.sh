@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cloud Run(eq.shum10.com等)自体が外から見て応答するかを確認する軽量
-# チェック。30秒おきに実行される前提なので、通常時のコストを極力
+# チェック。2分おきに実行される前提なので、通常時のコストを極力
 # 小さくしてある(1回のcurlだけで、状態が変わらなければ即終了する)。
 #
 # report_status.shはラズパイ上のqzss-mapアプリ(localhost)のみ確認して
@@ -17,6 +17,9 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 STATE_DIR="$DIR/update_state"
 LOG_FILE="$STATE_DIR/cloud_health_check.log"
 mkdir -p "$STATE_DIR"
+# shellcheck disable=SC1091
+source "$DIR/lib_log.sh"
+rotate_log "$LOG_FILE" 262144
 
 if [ -f "$DIR/qzss.env" ]; then
   set -a
@@ -51,7 +54,7 @@ CLOUD_STATE_FILE="$STATE_DIR/cloud_notify_state"
 last_cloud_state="unknown"
 [ -f "$CLOUD_STATE_FILE" ] && last_cloud_state="$(cat "$CLOUD_STATE_FILE")"
 
-# 30秒おきに動くので、1回ごとのチェック自体は1回のcurlだけにして軽くする
+# 2分おきに動くので、1回ごとのチェック自体は1回のcurlだけにして軽くする
 # (report_status.shの10回リトライのような重い作りにはしない)
 if curl -fs --max-time 10 "$CLOUD_BASE_URL/" > /dev/null 2>&1; then
   current_cloud_state="online"
@@ -59,10 +62,8 @@ else
   current_cloud_state="offline"
 fi
 
-# 状態が変わらなくても、実際に毎回チェックが動いていることを目視で
-# 確認できるよう、実行のたびに1行だけ記録する(Discord通知は状態が
-# 変わった時だけ、というedge-trigger方針とは別に、ログだけは常時記録する)
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] チェック実行: ${current_cloud_state}" >> "$LOG_FILE"
+# 毎回の実行結果はログへ書かない(2分おきに追記し続けるとSDカードの無駄な
+# 書き込みとログの肥大化になる)。状態が変わったときだけ下で記録・通知する
 
 if [ "$current_cloud_state" != "$last_cloud_state" ]; then
   if [ "$current_cloud_state" = "offline" ]; then
@@ -75,4 +76,5 @@ if [ "$current_cloud_state" != "$last_cloud_state" ]; then
     notify_discord "✅ ${CLOUD_BASE_URL} が復旧しました(オンライン)。"
   fi
 fi
-echo "$current_cloud_state" > "$CLOUD_STATE_FILE"
+# 状態ファイルも変化したときだけ書く(SDカードへの無駄な書き込みを避ける)
+[ "$current_cloud_state" = "$last_cloud_state" ] || echo "$current_cloud_state" > "$CLOUD_STATE_FILE"

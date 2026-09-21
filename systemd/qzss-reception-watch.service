@@ -1,0 +1,13 @@
+[Unit]
+Description=QZSS 受信監視・自動復旧(reception_watch.py)
+
+[Service]
+Type=oneshot
+# CH340のUSBリセット(/dev/bus/usb への書き込み)とデコーダの再起動には
+# root権限が必要なため，User=を指定せずrootで実行する。状態ファイルは
+# update_state/ 配下(reception_state.json)に書く
+Nice=10
+WorkingDirectory=/home/%i/qzss/qzss-pi-package
+# 監視対象のデコーダは，このユーザーのインスタンス(qzss-decoder@%i)
+Environment=QZSS_DECODER_UNIT=qzss-decoder@%i.service
+ExecStart=/home/%i/qzss/qzss-pi-package/venv/bin/python3 /home/%i/qzss/qzss-pi-package/reception_watch.py

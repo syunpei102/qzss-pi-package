@@ -70,5 +70,39 @@ class DeliveryTests(unittest.TestCase):
         failed.close.assert_called_once()
 
 
+class ReceiverParsingTests(unittest.TestCase):
+    def test_ubx_payload_length_uses_both_little_endian_bytes(self):
+        self.assertEqual(m.ubx_payload_length(b'\xb5\x62\x02\x13\x2c\x00'), 44)
+        self.assertEqual(m.ubx_payload_length(b'\xb5\x62\x02\x13\x00\x01'), 256)
+
+    def test_incomplete_lalert_ellipse_does_not_crash_deduplication(self):
+        report = {
+            'type': 'QzssDcxLAlert',
+            'a4_hazard_type': 'Flood',
+            'a12_ellipse_centre_latitude': 35.5,
+            'a13_ellipse_centre_longitude': None,
+            'raw': 'ellipse-without-longitude',
+        }
+        self.assertIsNone(m.semantic_dedup_key(report))
+        self.assertFalse(m.is_recent_duplicate(report, '', now=0))
+
+    def test_unknown_qzss_satellite_is_ignored_instead_of_crashing_receiver(self):
+        packet = bytearray(52)
+        packet[:7] = b'\xb5\x62\x02\x13\x2c\x00\x05'
+        packet[7] = 99
+        self.assertIsNone(m.ubx2qzqsm(bytes(packet)))
+
+    def test_nmea_checksum_accepts_uppercase_and_lowercase_hex(self):
+        sentence_without_checksum = '$GPGLL,4916.45,N,12311.12,W,225444,A,*'
+        checksum = format(m.nmea_checksum(sentence_without_checksum), '02X')
+        self.assertTrue(m.is_valid_nmea_sentence(sentence_without_checksum + checksum))
+        self.assertTrue(m.is_valid_nmea_sentence(sentence_without_checksum + checksum.lower()))
+
+    def test_nmea_checksum_rejects_malformed_or_incorrect_values(self):
+        self.assertFalse(m.is_valid_nmea_sentence('$GPGLL,broken'))
+        self.assertFalse(m.is_valid_nmea_sentence('$GPGLL,broken*ZZ'))
+        self.assertFalse(m.is_valid_nmea_sentence('$GPGLL,broken*00'))
+
+
 if __name__ == '__main__':
     unittest.main()

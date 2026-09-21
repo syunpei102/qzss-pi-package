@@ -21,27 +21,21 @@ if [ ! -f "$DIR/qzss.env" ]; then
 fi
 
 echo "📄 systemdユニットファイルを配置します(sudoが必要です)"
-# qzss-map / qzss-decoder はユーザー名を差し替えられるテンプレート
-# ユニット(@)のまま配置する。更新チェック系はタイマーとの紐付けを
-# 単純にするため、%i をこのユーザー名に直接置き換えた通常ユニットにする
-for f in "$DIR"/systemd/qzss-map.service "$DIR"/systemd/qzss-decoder.service "$DIR"/systemd/qzss-kiosk.service; do
-  name="$(basename "$f" .service)"
-  sudo cp "$f" "/etc/systemd/system/${name}@.service"
-done
-for f in "$DIR"/systemd/qzss-update-check.service "$DIR"/systemd/qzss-urgent-check.service "$DIR"/systemd/qzss-report-status.service "$DIR"/systemd/qzss-cloud-health-check.service "$DIR"/systemd/qzss-kiosk-watchdog.service "$DIR"/systemd/qzss-kiosk-daily-reload.service "$DIR"/systemd/qzss-wifi-recovery.service; do
-  name="$(basename "$f")"
-  sed "s/%i/$USER_NAME/g" "$f" | sudo tee "/etc/systemd/system/$name" > /dev/null
-done
-for f in "$DIR"/systemd/*.timer; do
-  sudo cp "$f" "/etc/systemd/system/$(basename "$f")"
-done
-sudo cp "$DIR/systemd/qzss-cpu-performance.service" "/etc/systemd/system/qzss-cpu-performance.service"
+# 配置・有効化はroot所有の専用ヘルパーに任せる(OTAも同じヘルパーで反映する)。
+# ヘルパーは全ユニットを生成・検証してから1ファイルずつ原子的に差し替え，
+# qzss-map / qzss-decoder / qzss-kiosk は name@.service のテンプレートに，
+# それ以外は %i をこのユーザー名に置き換えた通常ユニットにする
+HELPER=/usr/local/sbin/qzss-unit-helper
+sudo install -o root -g root -m 755 "$DIR/qzss_unit_helper.sh" "$HELPER"
 
 echo "🔑 更新スクリプトがsudo無しでサービス再起動・本体再起動できるようにします"
-SUDOERS_LINE="$USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qzss-map@$USER_NAME, /usr/bin/systemctl restart qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-map@$USER_NAME qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-kiosk@$USER_NAME, /usr/bin/systemctl reboot, /usr/bin/systemctl restart lightdm, /sbin/modprobe -r brcmfmac brcmfmac_cyw brcmutil, /sbin/modprobe brcmfmac"
+SUDOERS_LINE="$USER_NAME ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart qzss-map@$USER_NAME, /usr/bin/systemctl restart qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-map@$USER_NAME qzss-decoder@$USER_NAME, /usr/bin/systemctl restart qzss-kiosk@$USER_NAME, /usr/bin/systemctl reboot, /usr/bin/systemctl daemon-reload, /usr/local/sbin/qzss-unit-helper, /usr/bin/systemctl restart lightdm, /sbin/modprobe -r brcmfmac brcmfmac_cyw brcmutil, /sbin/modprobe brcmfmac"
 echo "$SUDOERS_LINE" | sudo tee "/etc/sudoers.d/qzss-update" > /dev/null
 sudo chmod 440 /etc/sudoers.d/qzss-update
 sudo visudo -c -f /etc/sudoers.d/qzss-update
+
+echo "🧩 ユニットを配置します(qzss-reception-watch.service 等を含む全ユニット)"
+sudo "$HELPER" install "$DIR/systemd"
 
 echo "🔄 systemdに反映します"
 sudo systemctl daemon-reload
@@ -57,14 +51,14 @@ echo "⏰ 更新チェックのタイマーを有効化します(毎晩3時 + �
 sudo systemctl enable --now "qzss-update-check.timer"
 sudo systemctl enable --now "qzss-urgent-check.timer"
 
-echo "📡 状態報告タイマーを有効化します(1時間おき。温度・リモートコマンド受信)"
+echo "📡 状態報告タイマーを有効化します(5分おき。温度・リモートコマンド受信)"
 sudo systemctl enable --now "qzss-report-status.timer"
 
-echo "☁️  クラウド死活監視タイマーを有効化します(30秒おき)"
+echo "☁️  クラウド死活監視タイマーを有効化します(2分おき)"
 sudo systemctl enable --now "qzss-cloud-health-check.timer"
 
-echo "⚡ CPUガバナーをperformance(常時最大クロック)に固定します"
-sudo systemctl enable --now "qzss-cpu-performance.service"
+echo "⚡ CPUガバナーを負荷追従(ondemand)にします(旧: 常時performanceは廃止)"
+sudo systemctl enable --now "qzss-cpu-governor.service"
 
 echo "🖥️  キオスクのレンダラークラッシュ監視タイマーを有効化します(30秒おき)"
 sudo systemctl enable --now "qzss-kiosk-watchdog.timer"
@@ -74,6 +68,9 @@ sudo systemctl enable --now "qzss-kiosk-daily-reload.timer"
 
 echo "📶 起動時WiFi復旧チェックを有効化します(wlan0が無ければドライバ再読み込みを試みる)"
 sudo systemctl enable --now "qzss-wifi-recovery.service"
+
+echo "📡 受信監視・自動復旧を有効化します(qzss-reception-watch.service を30秒おきに実行)"
+sudo systemctl enable --now "qzss-reception-watch.timer"
 
 echo "🐕 ハードウェアウォッチドッグを設定します(OSごとフリーズした場合の自動電源再投入)"
 WATCHDOG_REBOOT_NEEDED=0

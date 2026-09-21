@@ -36,7 +36,7 @@ fi
 if [[ "$title" != "$EXPECTED_TITLE_PREFIX"* ]]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚨 想定外のタイトルを検知しました(\"$title\")。レンダラークラッシュとみなしChromiumを再起動します" \
     | tee -a "$LOG_FILE"
-  sudo systemctl restart "qzss-kiosk@$(whoami).service"
+  sudo systemctl restart "qzss-kiosk@$(whoami)"
   exit 0
 fi
 
@@ -52,7 +52,7 @@ if [ -d "$CRASH_REPORTS_DIR" ]; then
   if [ "$current_count" -gt "$last_count" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚨 新しいクラッシュダンプを検知しました(${last_count}→${current_count}件)。タイトルは正常に見えても実際にはクラッシュしていた可能性が高いため、Chromiumを再起動します" \
       | tee -a "$LOG_FILE"
-    sudo systemctl restart "qzss-kiosk@$(whoami).service"
+    sudo systemctl restart "qzss-kiosk@$(whoami)"
     echo "$current_count" > "$CRASH_COUNT_FILE"
     exit 0
   fi
@@ -76,6 +76,6 @@ if [ "$kiosk_started_epoch" -gt 0 ] && [ $((now_epoch - kiosk_started_epoch)) -g
   if [ "$renderer_count" -eq 0 ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚨 描画プロセス(renderer)が存在しません。タイトル・クラッシュダンプ件数のどちらも変化しないタイプのクラッシュとみなし、Chromiumを再起動します" \
       | tee -a "$LOG_FILE"
-    sudo systemctl restart "qzss-kiosk@$(whoami).service"
+    sudo systemctl restart "qzss-kiosk@$(whoami)"
   fi
 fi

@@ -36,4 +36,4 @@ if [ -d "$CRASH_REPORTS_DIR/pending" ]; then
 fi
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🔄 定期リロード: Chromiumを再起動します" | tee -a "$LOG_FILE"
-sudo systemctl restart "qzss-kiosk@$(whoami).service"
+sudo systemctl restart "qzss-kiosk@$(whoami)"

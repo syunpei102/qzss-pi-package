@@ -62,14 +62,14 @@ sudo reboot   # ハードウェアウォッチドッグの有効化に必要(初
 (2回目以降の`install_services.sh`実行では既に設定済みなら再起動不要)。
 
 これで以下が自動的に動き出す:
-- 受信・デコード・送信(`qzss-decoder.service`)
-- 地図アプリ(ローカルkiosk版を使う場合。`qzss-map.service`)
+- 受信・デコード・送信(`qzss-decoder@<ユーザー名>.service`)
+- 地図アプリ(ローカルkiosk版を使う場合。`qzss-map@<ユーザー名>.service`)
 - 毎晩のOTA更新チェック(`qzss-update-check.timer`)・緊急更新チェック
   (`qzss-urgent-check.timer`)
-- 1時間おきの状態報告(`qzss-report-status.timer`) — これが
+- 5分おきの状態報告(`qzss-report-status.timer`) — これが
   Cloud Run側にこの拠点を認識させる第一歩
 
-## 6. 拠点がCloud Run側に認識されるのを待つ(最大1時間+α)
+## 6. 拠点がCloud Run側に認識されるのを待つ(通常2分，最大5分+α)
 
 `qzss-report-status.timer`は`OnBootSec=2min`なので、起動後2分以内に
 初回の状態報告が飛ぶ。以下で確認できる:

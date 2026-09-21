@@ -29,7 +29,6 @@ import http.client
 import json
 import operator
 import os
-import queue
 import random
 import socket
 import threading
@@ -69,6 +68,10 @@ SEMANTIC_DEDUP_WINDOW_SEC = 5 * 60
 
 
 
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def semantic_dedup_key(params):
     """map/server.js の reportGroupKey と同じ考え方: 災害種別+対象地域等で
     「同じ通報の再送」を意味的に判定する(rawが再送ごとに変わる通報にも効く)。
@@ -79,9 +82,12 @@ def semantic_dedup_key(params):
         area = params.get("ex1_target_area_code_raw")
         if area is not None:
             return f"lalert|{hazard}|ex1:{area}"
-        centre = params.get("a12_ellipse_centre_latitude")
-        if centre is not None:
-            return f"lalert|{hazard}|ellipse:{centre:.2f},{params.get('a13_ellipse_centre_longitude', 0):.2f}"
+        # 緯度・経度が両方そろっている場合だけ楕円の中心を使う(片側だけの通報で
+        # 例外になったり，経度0扱いで別地点と混同したりしない)
+        lat = params.get("a12_ellipse_centre_latitude")
+        lon = params.get("a13_ellipse_centre_longitude")
+        if _is_number(lat) and _is_number(lon):
+            return f"lalert|{hazard}|ellipse:{lat:.2f},{lon:.2f}"
         return None
     if report_type == "QzssDcxJAlert":
         hazard = params.get("a4_hazard_type") or ""
@@ -194,100 +200,74 @@ def region_config_refresh_loop():
 
 
 # ==================================================
-# 訓練放送表示設定(Discordの/set_training_broadcasts)のローカル同期
+# ローカルkioskへの設定同期(訓練放送表示・Lアラート解析のON/OFF)
 #
 # Discordの操作はCloud Run(公開URL)の/discord/interactionsにしか届かず、
 # ローカルkiosk(QZSS_LOCAL_URL)は完全に別インスタンスなので何も知らない。
-# region_config_refresh_loopと同じ「クラウドを定期ポーリングし、変化が
-# あればローカルへ反映」パターンで、ローカルkiosk表示にも(数分程度の
-# 遅延はあるが)Discordでの操作を届かせる。QZSS_LOCAL_URLが設定されて
-# いない(=ローカルkioskを併用していない)場合は何もしない
+# クラウドの/configを定期ポーリングし，変化があればローカルへ反映する。
+# 以前は訓練放送とLアラートで別々のループが同じ/configを2分ごとに二重に
+# 取得していた(Cloud Runへの無駄なリクエスト)ため，1回の取得で両方を
+# 処理する。QZSS_LOCAL_URLが未設定(=ローカルkioskを併用していない)なら
+# 何もしない
 # ==================================================
-TRAINING_BROADCAST_REFRESH_INTERVAL_SEC = 2 * 60
-last_known_show_training_broadcasts = None  # None=未取得
+LOCAL_CONFIG_REFRESH_INTERVAL_SEC = 2 * 60
+# 設定名 -> (/configのキー, ローカル同期先パス, 既定値, 表示名)
+LOCAL_SYNC_SETTINGS = {
+    "training": ("showTrainingBroadcasts", "/local-sync/training-broadcasts", True, "訓練放送表示設定"),
+    "lalert": ("lalertEnabled", "/local-sync/lalert", True, "Lアラート表示設定"),
+}
+last_known_local_settings = {name: None for name in LOCAL_SYNC_SETTINGS}  # None=未取得
 
 
 def _local_base_url():
     return LOCAL_URL[: -len("/ingest")] if LOCAL_URL.endswith("/ingest") else LOCAL_URL
 
 
-def _sync_training_broadcasts_once():
-    global last_known_show_training_broadcasts
+def _fetch_cloud_config():
     url = f"{_cloud_base_url()}/config?device={urllib.parse.quote(DEVICE_ID, safe='')}"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        enabled = bool(data.get("showTrainingBroadcasts", True))
-    except Exception as e:
-        print(f"⚠️ 訓練放送表示設定の取得に失敗しました(次回また試します): {e}")
-        return
-    if enabled == last_known_show_training_broadcasts:
-        return
-    try:
-        req = urllib.request.Request(
-            f"{_local_base_url()}/local-sync/training-broadcasts",
-            data=json.dumps({"enabled": enabled}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-        last_known_show_training_broadcasts = enabled
-        print(f"🔁 訓練放送表示設定をローカルkioskに反映しました: {enabled}")
-    except Exception as e:
-        print(f"⚠️ 訓練放送表示設定のローカル反映に失敗しました(次回また試します): {e}")
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
-def training_broadcast_sync_loop():
+def _post_local_setting(path, enabled):
+    req = urllib.request.Request(
+        f"{_local_base_url()}{path}",
+        data=json.dumps({"enabled": enabled}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10):
+        pass
+
+
+def sync_local_settings_once(fetch=None, post=None):
+    """/configを1回だけ取得し，変化した設定だけをローカルkioskへ反映する。"""
+    fetch = fetch or _fetch_cloud_config
+    post = post or _post_local_setting
+    try:
+        data = fetch()
+    except Exception as e:
+        print(f"⚠️ 設定の取得に失敗しました(次回また試します): {e}")
+        return
+    for name, (key, path, default, label) in LOCAL_SYNC_SETTINGS.items():
+        enabled = bool(data.get(key, default))
+        if enabled == last_known_local_settings[name]:
+            continue
+        try:
+            post(path, enabled)
+        except Exception as e:
+            print(f"⚠️ {label}のローカル反映に失敗しました(次回また試します): {e}")
+            continue
+        last_known_local_settings[name] = enabled
+        print(f"🔁 {label}をローカルkioskに反映しました: {enabled}")
+
+
+def local_config_sync_loop():
     if not LOCAL_URL:
         return
     while True:
-        _sync_training_broadcasts_once()
-        time.sleep(TRAINING_BROADCAST_REFRESH_INTERVAL_SEC)
-
-
-# ==================================================
-# Lアラート解析(表示・通知)ON/OFF設定(Discordの/set_lalert)のローカル同期
-#
-# training_broadcast_sync_loopと全く同じパターン。
-# ==================================================
-LALERT_REFRESH_INTERVAL_SEC = 2 * 60
-last_known_lalert_enabled = None  # None=未取得
-
-
-def _sync_lalert_enabled_once():
-    global last_known_lalert_enabled
-    url = f"{_cloud_base_url()}/config?device={urllib.parse.quote(DEVICE_ID, safe='')}"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        enabled = bool(data.get("lalertEnabled", True))
-    except Exception as e:
-        print(f"⚠️ Lアラート表示設定の取得に失敗しました(次回また試します): {e}")
-        return
-    if enabled == last_known_lalert_enabled:
-        return
-    try:
-        req = urllib.request.Request(
-            f"{_local_base_url()}/local-sync/lalert",
-            data=json.dumps({"enabled": enabled}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-        last_known_lalert_enabled = enabled
-        print(f"🔁 Lアラート表示設定をローカルkioskに反映しました: {enabled}")
-    except Exception as e:
-        print(f"⚠️ Lアラート表示設定のローカル反映に失敗しました(次回また試します): {e}")
-
-
-def lalert_sync_loop():
-    if not LOCAL_URL:
-        return
-    while True:
-        _sync_lalert_enabled_once()
-        time.sleep(LALERT_REFRESH_INTERVAL_SEC)
+        sync_local_settings_once()
+        time.sleep(LOCAL_CONFIG_REFRESH_INTERVAL_SEC)
 
 
 def is_in_scope(params):
@@ -403,12 +383,93 @@ def decode_full(sentence):
 # 送信専用のキュー+ワーカースレッドに分離し、受信ループは
 # キューへ積むだけ(ほぼ一瞬)で次のバイトの読み取りに戻れるようにする。
 # ==================================================
-send_queue = queue.Queue()
+# 送信キューは有界・優先度付きにする。以前は無制限のqueue.Queueで，送信失敗の
+# たびにワーカーがsleepして待つ作りだったため，(1)通信断が長引くとメモリが
+# 増え続ける，(2)再試行待ちの間に届いた新規の緊急通報が後ろに回される，という
+# 問題があった。再試行は「not_before(次に送ってよい時刻)」付きでキューへ
+# 戻すだけにし，ワーカーはsleepせず，送信可能な中で最も優先度の高いものを
+# 常に先に取り出す。
+PRIORITY_URGENT = 0     # 緊急通報(EEW・津波・震度・Jアラート・Lアラート等)
+PRIORITY_NORMAL = 1     # その他の対象通報(気象・洪水・降灰等)
+PRIORITY_HEARTBEAT = 2  # 死活監視(最新の1件だけ意味がある)
+URGENT_CATEGORY_NOS = {1, 2, 3, 4, 5, 6, 8}
+SEND_QUEUE_MAX = 200
+LOCAL_QUEUE_MAX = 100
+
+
+class QueuedItem:
+    __slots__ = ("payload", "priority", "attempt", "retryable", "not_before", "seq")
+
+    def __init__(self, payload, priority, attempt, retryable, not_before, seq):
+        self.payload = payload
+        self.priority = priority
+        self.attempt = attempt
+        self.retryable = retryable
+        self.not_before = not_before
+        self.seq = seq
+
+
+class SendQueue:
+    """有界の優先度付き送信キュー。満杯のときは最も優先度が低く古いものから
+    捨てる(新規がそれより低優先なら新規を捨てる)。ハートビートは常に最新の
+    1件だけを保持する。スレッドセーフ。"""
+
+    def __init__(self, maxsize, clock=time.monotonic):
+        self.maxsize = maxsize
+        self.clock = clock
+        self.dropped = 0
+        self._items = []
+        self._seq = 0
+        self._cond = threading.Condition()
+
+    def __len__(self):
+        with self._cond:
+            return len(self._items)
+
+    def put(self, payload, priority=PRIORITY_NORMAL, attempt=0, retryable=True, not_before=0.0):
+        """積めたらTrue，(満杯で低優先のため)捨てたらFalseを返す。"""
+        with self._cond:
+            if priority == PRIORITY_HEARTBEAT:
+                self._items = [i for i in self._items if i.priority != PRIORITY_HEARTBEAT]
+            if len(self._items) >= self.maxsize:
+                victim = max(self._items, key=lambda i: (i.priority, -i.seq))
+                if victim.priority < priority:
+                    self.dropped += 1
+                    return False
+                self._items.remove(victim)
+                self.dropped += 1
+            self._seq += 1
+            self._items.append(QueuedItem(payload, priority, attempt, retryable, not_before, self._seq))
+            self._cond.notify()
+            return True
+
+    def get(self, timeout=None):
+        """送信可能(not_beforeを過ぎた)な中で最も優先度が高く古いものを取り出す。
+        無ければ，次に送信可能になるまで(または新規投入まで)待つ。timeout秒
+        待っても無ければNone。"""
+        deadline = None if timeout is None else self.clock() + timeout
+        with self._cond:
+            while True:
+                now = self.clock()
+                ready = [i for i in self._items if i.not_before <= now]
+                if ready:
+                    item = min(ready, key=lambda i: (i.priority, i.seq))
+                    self._items.remove(item)
+                    return item
+                waits = [i.not_before - now for i in self._items]
+                if deadline is not None:
+                    waits.append(deadline - now)
+                    if deadline - now <= 0:
+                        return None
+                self._cond.wait(min(waits) if waits else None)
+
+
+send_queue = SendQueue(SEND_QUEUE_MAX)
 # ローカル(ラズパイ内kiosk表示用)送信は、クラウド送信とは完全に別の
 # キュー・スレッドにする。同じキュー/スレッドで直列に送ると、ローカル
 # 送信が詰まったり遅延した場合にクラウドへの送信(緊急地震速報等)まで
 # 遅れてしまうため
-local_send_queue = queue.Queue()
+local_send_queue = SendQueue(LOCAL_QUEUE_MAX)
 
 
 class Sender:
@@ -423,6 +484,7 @@ class Sender:
         self.path = parsed.path or "/"
         self.token = token
         self.conn = None
+        self.last_status = None  # 直近のHTTPステータス(接続失敗ならNone)
 
     def _connect(self):
         cls = http.client.HTTPSConnection if self.scheme == "https" else http.client.HTTPConnection
@@ -433,15 +495,19 @@ class Sender:
         (例外を投げない。呼び出し側でキューへの再投入を判断するため)。"""
         data = json.dumps(payload_dict, ensure_ascii=False).encode("utf-8")
         headers = {"Content-Type": "application/json", "X-Api-Key": self.token}
+        self.last_status = None
         # 既存の接続が(サーバー側のタイムアウト等で)切れていることがあるため、
-        # 失敗したら1回だけ接続を張り直してリトライする
+        # 使い回した接続で失敗したときだけ，1回接続を張り直してリトライする。
+        # 新規接続で失敗したなら宛先自体が不通なので，タイムアウトを2倍待たない
         for attempt in range(2):
+            reused = self.conn is not None
             try:
                 if self.conn is None:
                     self._connect()
                 self.conn.request("POST", self.path, body=data, headers=headers)
                 resp = self.conn.getresponse()
                 resp.read()
+                self.last_status = resp.status
                 if 200 <= resp.status < 300:
                     return True
                 print(f"⚠️ HTTP送信失敗: {self.host} status={resp.status}")
@@ -450,34 +516,53 @@ class Sender:
                 if self.conn is not None:
                     self.conn.close()
                 self.conn = None
-                if attempt == 1:
+                if attempt == 1 or not reused:
                     print("⚠️ 送信に失敗しました:", self.host, e)
+                    return False
         return False
 
 
 # 送信に失敗した通報は、ネットワークが一時的に不安定なだけの可能性が
-# あるため、少し待ってからキューに戻して再送する(自動リトライ)。
+# あるため、待ち時間を指数的に延ばしながらキューに戻して再送する(自動リトライ)。
 # 災危通報(実際の警報)は取りこぼしたくないので複数回リトライするが、
 # ハートビートは30秒おきに次が来るので古い1件に固執する意味が薄く、
-# リトライ自体を行わない(キューが詰まって本来の通報の送信が遅れるのを防ぐ)。
+# リトライ自体を行わない。認証エラー等の恒久的な4xxも再試行しない。
 MAX_SEND_RETRIES = 5
 RETRY_BACKOFF_SEC = 3
+RETRY_BACKOFF_MAX_SEC = 60
+
+
+def retry_delay(attempt):
+    return min(RETRY_BACKOFF_SEC * (2 ** attempt), RETRY_BACKOFF_MAX_SEC)
+
+
+def is_permanent_failure(status):
+    return status is not None and 400 <= status < 500 and status not in (408, 429)
+
+
+def process_send_item(sender, queue_, item, clock=time.monotonic):
+    """1件送信し，失敗して再試行すべきなら待機せずにキューへ戻す。"""
+    ok = sender.send(item.payload)
+    if ok or not item.retryable:
+        return ok
+    if is_permanent_failure(sender.last_status):
+        print(f"❌ 再試行しても成功しない応答のため諦めました(status={sender.last_status}): "
+              f"{item.payload.get('type')}")
+    elif item.attempt < MAX_SEND_RETRIES:
+        delay = retry_delay(item.attempt)
+        print(f"↻ 送信失敗、{delay}秒後以降に再試行します"
+              f"({item.attempt + 1}/{MAX_SEND_RETRIES}): {item.payload.get('type')}")
+        queue_.put(item.payload, item.priority, item.attempt + 1, item.retryable,
+                   not_before=clock() + delay)
+    else:
+        print(f"❌ 送信を諦めました(再試行回数上限): {item.payload.get('type')}")
+    return False
 
 
 def _sender_worker_loop():
     sender = Sender(CLOUD_URL, TOKEN)
     while True:
-        payload, attempt, retryable = send_queue.get()
-        ok = sender.send(payload)
-        if not ok and retryable:
-            if attempt < MAX_SEND_RETRIES:
-                print(f"↻ 送信失敗、{RETRY_BACKOFF_SEC}秒後に再試行します"
-                      f"({attempt + 1}/{MAX_SEND_RETRIES}): {payload.get('type')}")
-                time.sleep(RETRY_BACKOFF_SEC)
-                send_queue.put((payload, attempt + 1, retryable))
-            else:
-                print(f"❌ 送信を諦めました(再試行回数上限): {payload.get('type')}")
-        send_queue.task_done()
+        process_send_item(sender, send_queue, send_queue.get())
 
 
 def _local_sender_worker_loop():
@@ -488,17 +573,21 @@ def _local_sender_worker_loop():
     (ベストエフォート)。"""
     local_sender = Sender(LOCAL_URL, "")
     while True:
-        payload = local_send_queue.get()
-        local_sender.send(payload)
-        local_send_queue.task_done()
+        local_sender.send(local_send_queue.get().payload)
 
 
-def enqueue_send(payload, retryable=True):
-    send_queue.put((payload, 0, retryable))
-    # queue.put()はロック取得のみで一瞬で返る(送信そのものは別スレッドが
-    # 行う)ため、ここでLOCAL_URLへも積んでよい。クラウド側の速度には影響しない
+def report_priority(category_key):
+    if category_key in ("jalert", "lalert") or category_key in URGENT_CATEGORY_NOS:
+        return PRIORITY_URGENT
+    return PRIORITY_NORMAL
+
+
+def enqueue_send(payload, retryable=True, priority=PRIORITY_NORMAL):
+    send_queue.put(payload, priority, 0, retryable)
+    # put()はロック取得のみで一瞬で返る(送信そのものは別スレッドが行う)ため、
+    # ここでLOCAL_URLへも積んでよい。クラウド側の速度には影響しない
     if LOCAL_URL:
-        local_send_queue.put(payload)
+        local_send_queue.put(payload, priority, 0, False)
 
 
 def route_report(params, category_key, is_test_data=False, t0=None, t1=None):
@@ -516,7 +605,7 @@ def route_report(params, category_key, is_test_data=False, t0=None, t1=None):
                 "t0_received_ms": int(t0 * 1000),
                 "t1_decoded_ms": int(t1 * 1000),
             }
-        enqueue_send(params, retryable=True)
+        enqueue_send(params, retryable=True, priority=report_priority(category_key))
         print("🛰️ 地図へ送信キューに追加:", params.get("type"))
     else:
         print("(対象外カテゴリのため送信スキップ)")
@@ -537,7 +626,7 @@ def send_heartbeat_loop():
         }
         # ハートビートは30秒おきに次が来るので、古い1件のために
         # リトライして詰まらせる必要はない(失敗したら諦めて次を待つ)
-        enqueue_send(payload, retryable=False)
+        enqueue_send(payload, retryable=False, priority=PRIORITY_HEARTBEAT)
         time.sleep(HEARTBEAT_INTERVAL_SEC)
 
 
@@ -673,6 +762,22 @@ def nmea_checksum(sentence):
     return cksum
 
 
+def is_valid_nmea_sentence(sentence):
+    """'$....*HH' 形式で，チェックサム(16進2桁・大文字小文字どちらも可)が一致するか。
+    u-blox等は大文字，他の機器は小文字で出すため，文字列一致ではなく数値で比較する。"""
+    sentence = sentence.strip()
+    if not sentence.startswith("$") or "*" not in sentence:
+        return False
+    body, _, given = sentence[1:].partition("*")
+    if len(given) != 2:
+        return False
+    try:
+        expected = int(given, 16)
+    except ValueError:
+        return False
+    return nmea_checksum(body) == expected
+
+
 def ubx_checksum(message):
     ck_a = 0
     ck_b = 0
@@ -684,16 +789,136 @@ def ubx_checksum(message):
     return ck_a, ck_b
 
 
+UBX_SYNC = b'\xb5\x62'
+UBX_HEADER_LEN = 6            # sync(2) + class(1) + id(1) + length(2)
+UBX_FRAME_OVERHEAD = 8        # ヘッダ6 + チェックサム2
+UBX_MAX_PAYLOAD = 1024        # SFRBXは数十バイト。これを超える長さは不正(ノイズ)とみなす
+NMEA_MAX_LINE = 256           # NMEAの規格上限は82文字
+
+
+def ubx_payload_length(header):
+    """UBXヘッダ(先頭6バイト以上)からペイロード長を返す。長さはリトルエンディアン2バイト。"""
+    return int.from_bytes(header[4:6], "little")
+
+
+class StreamFramer:
+    """シリアルのバイト列から UBX フレームと NMEA 行を切り出す。
+    不正な長さ・チェックサム不一致・途中欠落があっても，1バイトずつ読み捨てて
+    次の同期ヘッダから再同期する(壊れたフレームに巻き込まれて後続の正常な
+    フレームまで失わない)。フレームは ("ubx", bytes) / ("nmea", bytes)。"""
+
+    def __init__(self):
+        self.buf = bytearray()
+
+    def feed(self, data):
+        self.buf += data
+        frames = []
+        while True:
+            frame = self._next_frame()
+            if frame is None:
+                return frames
+            frames.append(frame)
+
+    def _next_frame(self):
+        buf = self.buf
+        while buf:
+            first = buf[0]
+            if first == 0xB5:
+                if len(buf) < 2:
+                    return None
+                if buf[1] != 0x62:
+                    del buf[0]
+                    continue
+                if len(buf) < UBX_HEADER_LEN:
+                    return None
+                payload = ubx_payload_length(buf)
+                if payload > UBX_MAX_PAYLOAD:
+                    del buf[0]
+                    continue
+                total = payload + UBX_FRAME_OVERHEAD
+                if len(buf) < total:
+                    return None
+                frame = bytes(buf[:total])
+                if (frame[-2], frame[-1]) == ubx_checksum(frame[2:-2]):
+                    del buf[:total]
+                    return ("ubx", frame)
+                del buf[0]  # チェックサム不一致: 偽の同期ヘッダとみなして次から探し直す
+                continue
+            if first == 0x24:  # '$'
+                newline = buf.find(b'\n')
+                end = newline if newline != -1 else len(buf)
+                # 行の途中にUBXの同期ヘッダがあれば，この'$'は誤検出。そこから再同期
+                sync = buf.find(UBX_SYNC, 1, end)
+                if sync != -1:
+                    del buf[:sync]
+                    continue
+                if newline == -1:
+                    if len(buf) > NMEA_MAX_LINE:
+                        del buf[0]
+                        continue
+                    return None
+                if newline + 1 > NMEA_MAX_LINE:
+                    del buf[0]
+                    continue
+                line = bytes(buf[:newline + 1])
+                del buf[:newline + 1]
+                return ("nmea", line)
+            del buf[0]
+        return None
+
+
 def ubx2qzqsm(line):
+    # UBX-RXM-SFRBX(QZSS, 9ワード)。ペイロードは8バイトのヘッダ+4バイト*9ワード=44
+    if len(line) < 14 + 3 + 8 * 4 + 1:
+        return None
     if line[:7] == b'\xB5\x62\x02\x13\x2C\x00\x05':  # UBX-RXM-SFRBX, 44 bytes, QZSS
-        satId = satellite_id[line[7] + 182]  # PRN -> Satellite ID
+        # 受信機が知らないPRN(将来の衛星・ノイズ)でKeyErrorにならないよう，未知なら読み捨てる
+        satId = satellite_id.get(line[7] + 182)  # PRN -> Satellite ID
+        if satId is None:
+            return None
         data = b''
         for i in range(9):
             data += bytes((line[14+3+i*4], line[14+2+i*4], line[14+1+i*4], line[14+0+i*4]))
         if data[1] >> 2 == 43 or data[1] >> 2 == 44:  # Message Type 43=JMA-DC Report, 44=Other
             dcr_message = (data[:31] + bytes((data[31] & 0xC0,))).hex()[:-1]  # 256-4=252 bit
             sentence = '$QZQSM,' + satId + ',' + dcr_message + '*'
-            return sentence + format(nmea_checksum(sentence), 'x')
+            return sentence + format(nmea_checksum(sentence), '02X')
+
+
+def handle_ubx_frame(frame, t0_received):
+    sentence = ubx2qzqsm(frame)
+    if sentence is None:
+        return
+    print(sentence)
+    params, key = decode_full(sentence)
+    t1_decoded = time.time()  # T1: デコード完了
+    if VERBOSE_DECODE:
+        print(json.dumps(params, ensure_ascii=False, indent=2, default=str))
+    note_satellite_seen(params)
+    # 拠点に地域が割り当てられていて、かつこの通報が対象都道府県以外だけを
+    # 対象にしている場合、ここで即座に処理を打ち切る(「送信しない」のではなく、
+    # 重複排除の登録も含めて「それ以上処理しない」)。デコード自体はどの通報が
+    # 対象かを判定するために避けられないが、それ以降は一切行わない。
+    if not is_in_scope(params):
+        print("(拠点の対象地域外のため処理をスキップ)")
+        return
+    # raw(プリアンブル・CRC・衛星IDを含まない本体)で重複判定する。
+    # sentence はプリアンブルが送信ごとに巡回して毎回変わるため使えない。
+    if is_recent_duplicate(params, sentence):
+        print("(期限内の同一内容のため送信スキップ)")
+    else:
+        route_report(params, key, t0=t0_received, t1=t1_decoded)
+
+
+def handle_nmea_line(line, print_all):
+    if not print_all:
+        return
+    try:
+        sentence = line.decode().strip('\r\n')
+    except UnicodeDecodeError:
+        return
+    if is_valid_nmea_sentence(sentence):
+        print(sentence)
 
 
 if __name__ == '__main__':
@@ -713,8 +938,7 @@ if __name__ == '__main__':
     threading.Thread(target=send_heartbeat_loop, daemon=True).start()
     threading.Thread(target=send_test_signal_loop, daemon=True).start()
     threading.Thread(target=region_config_refresh_loop, daemon=True).start()
-    threading.Thread(target=training_broadcast_sync_loop, daemon=True).start()
-    threading.Thread(target=lalert_sync_loop, daemon=True).start()
+    threading.Thread(target=local_config_sync_loop, daemon=True).start()
 
     RECONNECT_WAIT_SEC = 5
     IDLE_TIMEOUT_SEC = 20
@@ -729,83 +953,27 @@ if __name__ == '__main__':
                 serial_ok.set()
                 last_byte_time = time.time()
 
+                framer = StreamFramer()
                 while True:
-                    # bytesの += は毎回新しいオブジェクトを作り直す(O(n))ため、
-                    # bytearrayにして.extend()相当のin-place追記(償却O(1))にする。
-                    # 1メッセージ分(数十バイト程度)なので体感できる差ではないが、
-                    # 積み重なるバイト単位ループの無駄を削る意味で変更する。
-                    line = bytearray()
-                    nmea_flag = False
-                    ubx_flag = False
-                    count = 0
-                    payload_length = 0
-                    while True:
-                        if ubx_flag:
-                            if count > 4 and payload_length == 0:
-                                payload_length = int.from_bytes(line[4:5], "little")
-                            if payload_length > 0 and count == payload_length + 8:
-                                break
-                        b = ser.read()
-                        if not b:
-                            if time.time() - last_byte_time > IDLE_TIMEOUT_SEC:
-                                print(f"🔴 オフライン({IDLE_TIMEOUT_SEC}秒間データを受信していません)")
-                                raise serial.SerialException(
-                                    f"{IDLE_TIMEOUT_SEC}秒間データを受信していません(切断の可能性)")
-                            continue
-                        last_byte_time = time.time()
-                        if b == b'$' and not ubx_flag:
-                            nmea_flag = True
-                        if b == b'\x62' and line == b'\xB5':
-                            ubx_flag = True
-                        if b == b'\n':
-                            if line.endswith(b'\r'):
-                                line += b
-                                break
-                            else:
-                                line += b
+                    # 1バイトずつread()するとシステムコールが多くPi 3のCPUを
+                    # 無駄に使うため，受信済みの分をまとめて読む(無ければ
+                    # timeout=1秒まで1バイト待つ)
+                    chunk = ser.read(max(1, ser.in_waiting))
+                    if not chunk:
+                        if time.time() - last_byte_time > IDLE_TIMEOUT_SEC:
+                            print(f"🔴 オフライン({IDLE_TIMEOUT_SEC}秒間データを受信していません)")
+                            raise serial.SerialException(
+                                f"{IDLE_TIMEOUT_SEC}秒間データを受信していません(切断の可能性)")
+                        continue
+                    last_byte_time = time.time()
+                    # T0: 信号受信(バイト列を読み終えた時刻)。レイテンシ計測
+                    # (T0受信→T1デコード→T2サーバー受信→T3配信→T4描画完了)の起点
+                    t0_received = last_byte_time
+                    for kind, frame in framer.feed(chunk):
+                        if kind == "ubx":
+                            handle_ubx_frame(frame, t0_received)
                         else:
-                            line += b
-                        count += 1
-
-                    # T0: 信号受信(1メッセージ分のバイト列を読み終えた時刻)。
-                    # レイテンシ計測(T0受信→T1デコード→T2サーバー受信→
-                    # T3配信→T4描画完了)の起点
-                    t0_received = time.time()
-
-                    if args.nmea and nmea_flag:
-                        try:
-                            sentence = line.decode().strip('\r\n')
-                            ck = nmea_checksum(sentence)
-                            if format(ck, 'x') == sentence.split('*', 1)[1]:
-                                print(sentence)
-                        except (UnicodeDecodeError, IndexError):
-                            pass
-
-                    if ubx_flag:
-                        ck_a, ck_b = ubx_checksum(line[2:payload_length+6])
-                        if line[-2] == ck_a and line[-1] == ck_b:
-                            sentence = ubx2qzqsm(line)
-                            if sentence is not None:
-                                print(sentence)
-                                params, key = decode_full(sentence)
-                                t1_decoded = time.time()  # T1: デコード完了
-                                if VERBOSE_DECODE:
-                                    print(json.dumps(params, ensure_ascii=False, indent=2, default=str))
-                                note_satellite_seen(params)
-                                # 拠点に地域が割り当てられていて、かつこの通報が対象都道府県
-                                # 以外だけを対象にしている場合、ここで即座に処理を打ち切る
-                                # (「送信しない」のではなく、重複排除の登録も含めて
-                                # 「それ以上処理しない」)。デコード自体はどの通報が対象かを
-                                # 判定するために避けられないが、それ以降は一切行わない。
-                                if not is_in_scope(params):
-                                    print("(拠点の対象地域外のため処理をスキップ)")
-                                    continue
-                                # raw(プリアンブル・CRC・衛星IDを含まない本体)で重複判定する。
-                                # sentence はプリアンブルが送信ごとに巡回して毎回変わるため使えない。
-                                if is_recent_duplicate(params, sentence):
-                                    print("(期限内の同一内容のため送信スキップ)")
-                                else:
-                                    route_report(params, key, t0=t0_received, t1=t1_decoded)
+                            handle_nmea_line(frame, args.nmea)
         except (serial.SerialException, OSError) as e:
             serial_ok.clear()
             print(f"⚠️ シリアル接続が切れました({e})。{RECONNECT_WAIT_SEC}秒後に再接続を試みます...")

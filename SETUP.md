@@ -188,9 +188,9 @@ tail -f ~/qzss/qzss-pi-package/update_state/update_check.log
 
 ## 9. デバイス管理ダッシュボードと温度監視
 
-`./install_services.sh` を実行すると、上記のOTA更新に加えて
-`qzss-report-status.timer` も有効になる。これは1時間おきに
-`report_status.sh` を実行し、以下を行う:
+`./install_services.sh` を実行すると，上記のOTA更新に加えて
+`qzss-report-status.timer` も有効になる．これは5分おきに
+`report_status.sh` を実行し，以下を行う:
 
 - 本体温度・稼働時間・ディスク空き容量・現在のgitコミットをCloud Run
   (`qzss-map`)へ報告する

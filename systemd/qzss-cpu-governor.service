@@ -1,0 +1,16 @@
+[Unit]
+Description=QZSS CPUガバナーを負荷追従(ondemand)にする(常時最大クロックにしない)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+# 以前は常時performance(最大クロック固定)にしていたが，Raspberry Piの
+# 発熱・消費電力・サーマルスロットリングの原因になるため，負荷に応じて
+# クロックが変わるガバナーにする。他のガバナー(schedutil等)を使う場合は
+# QZSS_CPU_GOVERNOR を qzss.env に書く
+EnvironmentFile=-/home/%i/qzss/qzss-pi-package/qzss.env
+ExecStart=/home/%i/qzss/qzss-pi-package/cpu_governor.sh
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

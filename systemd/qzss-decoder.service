@@ -1,7 +1,10 @@
 [Unit]
 Description=QZSS 受信機デコーダ(read_legacy_dual.py)
-After=network.target qzss-map.service
-Wants=qzss-map.service
+# 同じインスタンス(%i)のqzss-map@%i.serviceに依存させる。以前は
+# テンプレート化前の(@なしの)ユニット名を書いていたため，存在しない
+# ユニットへの依存になっており，起動順序・連動が効いていなかった
+After=network.target qzss-map@%i.service
+Wants=qzss-map@%i.service
 # クラッシュを繰り返しても再起動を止めない(既定では短時間に5回落ちると
 # systemdが諦めて「failed」のまま放置してしまうため、上限を外す)。
 # StartLimitIntervalSec/StartLimitBurstは[Service]ではなく[Unit]

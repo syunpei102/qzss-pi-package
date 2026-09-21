@@ -13,8 +13,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python -m py_compile read_legacy_dual.py
-      - run: bash -n update_check.sh
+      - run: python -m py_compile read_legacy_dual.py reception_watch.py command_inbox.py status_payload.py
+      - run: for f in *.sh; do bash -n "$f"; done
       - run: python test_is_in_scope.py
       - run: python test_reception_watch.py
-      - run: python -m unittest test_delivery -v
+      - run: python -m unittest discover -p 'test_*.py' -v
