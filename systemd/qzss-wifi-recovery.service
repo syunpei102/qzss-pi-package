@@ -1,5 +1,5 @@
 [Unit]
-Description=QZSS 起動時WiFi(wlan0)復旧チェック
+Description=QZSS WiFi(wlan0)検知・復旧チェック
 After=network-pre.target
 Before=network.target
 

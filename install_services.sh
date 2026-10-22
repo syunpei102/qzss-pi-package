@@ -66,8 +66,9 @@ sudo systemctl enable --now "qzss-kiosk-watchdog.timer"
 echo "🔄 キオスクの定期リロードタイマーを有効化します(毎晩4時。クラッシュしないまま機能が徐々に壊れる問題の予防)"
 sudo systemctl enable --now "qzss-kiosk-daily-reload.timer"
 
-echo "📶 起動時WiFi復旧チェックを有効化します(wlan0が無ければドライバ再読み込みを試みる)"
+echo "📶 WiFi復旧チェックを有効化します(起動時と5分おきにwlan0を確認)"
 sudo systemctl enable --now "qzss-wifi-recovery.service"
+sudo systemctl enable --now "qzss-wifi-recovery.timer"
 
 echo "📡 受信監視・自動復旧を有効化します(qzss-reception-watch.service を30秒おきに実行)"
 sudo systemctl enable --now "qzss-reception-watch.timer"
