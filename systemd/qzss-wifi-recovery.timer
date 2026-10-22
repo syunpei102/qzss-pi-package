@@ -1,0 +1,11 @@
+[Unit]
+Description=QZSS WiFi(wlan0)復旧チェックを定期実行
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=qzss-wifi-recovery.service
+
+[Install]
+WantedBy=timers.target
