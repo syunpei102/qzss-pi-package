@@ -50,7 +50,8 @@ Nice=-5
 # の組み合わせは逆にメモリ使用量を増やしてしまい(427MB→660〜730MB)
 # 却下した。Chromiumのフラグはこの機体では直感に反する結果になることが
 # あるため、変更する際は1つずつ実測で検証すること
-ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --use-angle=swiftshader --enable-unsafe-swiftshader --disable-smooth-scrolling --disable-background-networking --disable-sync --disable-notifications --disable-client-side-phishing-detection --disable-default-apps --js-flags="--max-old-space-size=128" --disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication,GCM http://localhost:8080'
+# 切り戻し: URL末尾を renderer=maplibre に変更して daemon-reload と本サービス再起動．
+ExecStart=/bin/bash -c 'export DISPLAY=:0; export XDG_RUNTIME_DIR=/run/user/$(id -u %i); exec /usr/bin/chromium --kiosk --incognito --noerrdialogs --disable-infobars --disable-session-crashed-bubble --disable-restore-session-state --check-for-update-interval=31536000 --password-store=basic --use-angle=swiftshader --enable-unsafe-swiftshader --disable-smooth-scrolling --disable-background-networking --disable-sync --disable-notifications --disable-client-side-phishing-detection --disable-default-apps --js-flags="--max-old-space-size=128" --disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication,GCM http://localhost:8080?renderer=native'
 Restart=on-failure
 RestartSec=5
 
