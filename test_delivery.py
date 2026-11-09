@@ -17,6 +17,18 @@ class DeliveryTests(unittest.TestCase):
         for i, report in enumerate(sequence):
             self.assertFalse(m.is_recent_duplicate(report, '', now=i))
 
+    def test_receiver_duration_is_monotonic_span_not_wall_timestamp(self):
+        queued = []
+        original = m.enqueue_send
+        m.enqueue_send = lambda payload, **kwargs: queued.append(payload)
+        try:
+            m.route_report({'type': 'QzssDcReportJmaEarthquakeEarlyWarning'}, 1,
+                           t0=100.0, t1=100.00425)
+        finally:
+            m.enqueue_send = original
+        self.assertEqual(queued[0]['client_timestamps'],
+                         {'schema_version': 2, 'receiver_decode_ms': 4.25})
+
     def test_changed_instructions_and_extent_are_delivered(self):
         self.assertFalse(m.is_recent_duplicate(self.alert, '', now=0))
         self.assertFalse(m.is_recent_duplicate({**self.alert, 'a14_ellipse_semi_major_axis': 200}, '', now=1))

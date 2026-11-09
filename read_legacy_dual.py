@@ -596,14 +596,12 @@ def route_report(params, category_key, is_test_data=False, t0=None, t1=None):
         params["is_test_data"] = True
 
     if category_key in ("jalert", "lalert") or category_key in ALLOWED_CATEGORY_NOS:
-        # レイテンシ計測用(T0受信・T1デコード完了)。以降サーバー側で
-        # T2(受信)・T3(配信)、クライアント側でT4(描画完了)を追記し、
-        # 各段階の所要時間をログで可視化する
+        # 同一機器の単調時計で測る．機器間の壁時計を引き算しない．
         if t0 is not None and t1 is not None:
             params = dict(params)
             params["client_timestamps"] = {
-                "t0_received_ms": int(t0 * 1000),
-                "t1_decoded_ms": int(t1 * 1000),
+                "schema_version": 2,
+                "receiver_decode_ms": round((t1 - t0) * 1000, 3),
             }
         enqueue_send(params, retryable=True, priority=report_priority(category_key))
         print("🛰️ 地図へ送信キューに追加:", params.get("type"))
@@ -885,13 +883,13 @@ def ubx2qzqsm(line):
             return sentence + format(nmea_checksum(sentence), '02X')
 
 
-def handle_ubx_frame(frame, t0_received):
+def handle_ubx_frame(frame, t0_decode_start):
     sentence = ubx2qzqsm(frame)
     if sentence is None:
         return
     print(sentence)
     params, key = decode_full(sentence)
-    t1_decoded = time.time()  # T1: デコード完了
+    t1_decoded = time.monotonic()  # 同一機器内の経過時間
     if VERBOSE_DECODE:
         print(json.dumps(params, ensure_ascii=False, indent=2, default=str))
     note_satellite_seen(params)
@@ -907,7 +905,7 @@ def handle_ubx_frame(frame, t0_received):
     if is_recent_duplicate(params, sentence):
         print("(期限内の同一内容のため送信スキップ)")
     else:
-        route_report(params, key, t0=t0_received, t1=t1_decoded)
+        route_report(params, key, t0=t0_decode_start, t1=t1_decoded)
 
 
 def handle_nmea_line(line, print_all):
@@ -966,12 +964,10 @@ if __name__ == '__main__':
                                 f"{IDLE_TIMEOUT_SEC}秒間データを受信していません(切断の可能性)")
                         continue
                     last_byte_time = time.time()
-                    # T0: 信号受信(バイト列を読み終えた時刻)。レイテンシ計測
-                    # (T0受信→T1デコード→T2サーバー受信→T3配信→T4描画完了)の起点
-                    t0_received = last_byte_time
                     for kind, frame in framer.feed(chunk):
                         if kind == "ubx":
-                            handle_ubx_frame(frame, t0_received)
+                            # チャンク内に複数フレームがある場合も，各フレームの処理開始を個別に測る．
+                            handle_ubx_frame(frame, time.monotonic())
                         else:
                             handle_nmea_line(frame, args.nmea)
         except (serial.SerialException, OSError) as e:
