@@ -153,15 +153,24 @@ class ConfigSyncTests(unittest.TestCase):
         m.sync_local_settings_once(fetch=fetch, post=post)
         self.assertEqual(fetch.call_count, 1)
         posted = {call.args[0]: call.args[1] for call in post.call_args_list}
-        self.assertEqual(posted, {'/local-sync/training-broadcasts': False, '/local-sync/lalert': True})
+        self.assertEqual(posted, {'/local-sync/weatherEnabled': False, '/local-sync/volcanoEnabled': False, '/local-sync/training-broadcasts': False, '/local-sync/lalert': True})
 
     def test_unchanged_settings_are_not_posted_again_and_failed_ones_retry(self):
         fetch = Mock(return_value={'showTrainingBroadcasts': True, 'lalertEnabled': True})
-        post = Mock(side_effect=[None, OSError('local down')])
+        post = Mock(side_effect=lambda path, value: (_ for _ in ()).throw(OSError('local down')) if path == '/local-sync/lalert' else None)
         m.sync_local_settings_once(fetch=fetch, post=post)
         post = Mock()
         m.sync_local_settings_once(fetch=fetch, post=post)
         self.assertEqual([c.args[0] for c in post.call_args_list], ['/local-sync/lalert'])
+
+    def test_category_changes_share_one_fetch_and_reach_local_server(self):
+        fetch = Mock(return_value={'weatherEnabled': True, 'volcanoEnabled': False})
+        post = Mock()
+        m.sync_local_settings_once(fetch=fetch, post=post)
+        self.assertEqual(fetch.call_count, 1)
+        posted = {call.args[0]: call.args[1] for call in post.call_args_list}
+        self.assertIs(posted['/local-sync/weatherEnabled'], True)
+        self.assertIs(posted['/local-sync/volcanoEnabled'], False)
 
     def test_fetch_failure_is_survived(self):
         m.sync_local_settings_once(fetch=Mock(side_effect=OSError('x')), post=Mock())

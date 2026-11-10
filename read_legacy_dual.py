@@ -213,6 +213,8 @@ def region_config_refresh_loop():
 LOCAL_CONFIG_REFRESH_INTERVAL_SEC = 2 * 60
 # 設定名 -> (/configのキー, ローカル同期先パス, 既定値, 表示名)
 LOCAL_SYNC_SETTINGS = {
+    "weather": ("weatherEnabled", "/local-sync/weatherEnabled", False, "気象情報表示・通知設定"),
+    "volcano": ("volcanoEnabled", "/local-sync/volcanoEnabled", False, "火山・降灰表示・通知設定"),
     "training": ("showTrainingBroadcasts", "/local-sync/training-broadcasts", True, "訓練放送表示設定"),
     "lalert": ("lalertEnabled", "/local-sync/lalert", True, "Lアラート表示設定"),
 }
