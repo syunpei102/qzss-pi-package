@@ -80,3 +80,16 @@ python -m unittest discover -p 'test_*.py' -v
 python test_is_in_scope.py
 python test_reception_watch.py
 ```
+
+
+### Oracleとの並行検証用の送信
+
+`QZSS_SECONDARY_CLOUD_URL`と`QZSS_SECONDARY_INGEST_TOKEN`をqzss.envへ追加する．
+既存の`QZSS_CLOUD_URL`，`QZSS_INGEST_TOKEN`，`QZSS_LOCAL_URL`は変更しない．
+第2送信先はHTTPS必須で，専用キュー（最大100件）とワーカーを使用する．
+ハートビートは最新1件に集約し，緊急電文を優先する．10秒を超えた待機電文は破棄する．
+第2送信先の失敗を保存電文から定期再試行する処理はない．衛星の実受信に基づく
+従来の5分重複抑止が解除されたとき，両送信先へ再度投入する．
+第2送信先が失敗しても本番側キューの再試行やローカル表示へ影響しない．
+状態報告・地域設定取得・Discordコマンドは引き続き主送信先だけを使用する．
+設定を外してデコーダを再起動すれば従来の送信へ戻る．
