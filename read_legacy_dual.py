@@ -25,6 +25,7 @@
 import argparse
 import base64
 import datetime
+import copy
 import http.client
 import json
 import operator
@@ -125,6 +126,8 @@ CLOUD_URL = os.environ.get("QZSS_CLOUD_URL", "").strip()
 # クラウドへの送信も維持したい場合、http://localhost:8080/ingest を指定する)
 LOCAL_URL = os.environ.get("QZSS_LOCAL_URL", "").strip()
 TOKEN = os.environ.get("QZSS_INGEST_TOKEN", "").strip()
+SECONDARY_URL = os.environ.get('QZSS_SECONDARY_CLOUD_URL', '').strip()
+SECONDARY_TOKEN = os.environ.get('QZSS_SECONDARY_INGEST_TOKEN', '').strip()
 DEVICE_ID = os.environ.get("QZSS_DEVICE_ID", "").strip() or socket.gethostname()
 # デフォルトでは無効(ラズパイ本番のログ出力量を変えないため)。手元での
 # 動作確認用(map_macbook等)にデコード結果(params)の中身を丸ごと
@@ -472,6 +475,8 @@ send_queue = SendQueue(SEND_QUEUE_MAX)
 # 送信が詰まったり遅延した場合にクラウドへの送信(緊急地震速報等)まで
 # 遅れてしまうため
 local_send_queue = SendQueue(LOCAL_QUEUE_MAX)
+secondary_send_queue = SendQueue(100)
+SECONDARY_MAX_AGE_SEC = 10
 
 
 class Sender:
@@ -578,6 +583,21 @@ def _local_sender_worker_loop():
         local_sender.send(local_send_queue.get().payload)
 
 
+def process_secondary_item(sender, item, clock=time.monotonic):
+    # 比較先への遅延転送で，古い電文のTTLを更新しない．再試行は実受信に任せる．
+    if clock() - item.payload['queued_at'] > SECONDARY_MAX_AGE_SEC:
+        return False
+    return sender.send(item.payload['report'])
+
+
+def _secondary_sender_worker_loop():
+    sender = Sender(SECONDARY_URL, SECONDARY_TOKEN)
+    while True:
+        item = secondary_send_queue.get()
+        if not process_secondary_item(sender, item):
+            print('⚠️ 比較先への送信失敗または古い待機電文を破棄．GCP送信は継続．')
+
+
 def report_priority(category_key):
     if category_key in ("jalert", "lalert") or category_key in URGENT_CATEGORY_NOS:
         return PRIORITY_URGENT
@@ -590,6 +610,9 @@ def enqueue_send(payload, retryable=True, priority=PRIORITY_NORMAL):
     # ここでLOCAL_URLへも積んでよい。クラウド側の速度には影響しない
     if LOCAL_URL:
         local_send_queue.put(payload, priority, 0, False)
+    if SECONDARY_URL and SECONDARY_TOKEN:
+        secondary_send_queue.put({'report': copy.deepcopy(payload), 'queued_at': time.monotonic()},
+                                 priority, 0, False)
 
 
 def route_report(params, category_key, is_test_data=False, t0=None, t1=None):
@@ -932,7 +955,14 @@ if __name__ == '__main__':
         print("❌ QZSS_CLOUD_URL が未設定です。送信先(Cloud RunのURL、またはローカルのhttp://localhost:PORT/ingest)を設定してください。")
         raise SystemExit(1)
 
+    if SECONDARY_URL:
+        parsed_secondary = urllib.parse.urlparse(SECONDARY_URL)
+        if parsed_secondary.scheme != 'https' or not parsed_secondary.hostname or not SECONDARY_TOKEN:
+            print('⚠️ 比較先の設定が不正のため比較送信だけを無効化します．')
+            SECONDARY_URL = ''
     threading.Thread(target=_sender_worker_loop, daemon=True).start()
+    if SECONDARY_URL:
+        threading.Thread(target=_secondary_sender_worker_loop, daemon=True).start()
     if LOCAL_URL:
         threading.Thread(target=_local_sender_worker_loop, daemon=True).start()
     threading.Thread(target=send_heartbeat_loop, daemon=True).start()
