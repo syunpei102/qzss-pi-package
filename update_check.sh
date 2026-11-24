@@ -129,10 +129,26 @@ restart_services() {
 # 地図アプリが実際に応答するかを確認する(プロセスが起動していても、
 # 中身が壊れていて応答しないケースを検知するため)
 health_check() {
-  local tries=10
+  local tries=15 user decoder kiosk started kiosk_enabled
+  user="$(whoami)"
+  decoder="qzss-decoder@${user}.service"
+  kiosk="qzss-kiosk@${user}.service"
+  started="$(systemctl show "$decoder" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+  kiosk_enabled=0
+  if systemctl is-enabled --quiet "$kiosk"; then kiosk_enabled=1; fi
   for i in $(seq 1 "$tries"); do
     if curl --max-time 5 -fs "http://localhost:${HTTP_PORT}/" > /dev/null 2>&1 \
-      && systemctl is-active --quiet "qzss-decoder@$(whoami).service"; then
+      && curl --max-time 5 -fs "http://localhost:${HTTP_PORT}/main.js" > /dev/null 2>&1 \
+      && systemctl is-active --quiet "$decoder" \
+      && { [ "$kiosk_enabled" -eq 0 ] || {
+        systemctl is-active --quiet "$kiosk" \
+          && { [ "${REQUIRE_KIOSK_WINDOW:-0}" -eq 0 ] ||
+            [[ "$(DISPLAY=:0 xdotool getactivewindow getwindowname 2>/dev/null)" == QZSS* ]]; }
+      }; } \
+      && { [ "${REQUIRE_FRESH_RECEPTION:-0}" -eq 0 ] || {
+        [ -n "$started" ] && journalctl -u "$decoder" --since "$started" --no-pager -o cat 2>/dev/null \
+          | grep -E '^\$QZQSM,' > /dev/null
+      }; }; then
       return 0
     fi
     sleep 2
@@ -273,6 +289,17 @@ log "=== 更新チェック開始 ==="
 map_updated=0
 pi_updated=0
 update_failed=0
+# 直前まで受信していた拠点では，再起動後にも新しい有効電文を要求する．
+# 受信機未接続や受信休止中の拠点には，更新前からの状態を失敗として扱わない．
+REQUIRE_FRESH_RECEPTION=0
+REQUIRE_KIOSK_WINDOW=0
+if command -v xdotool >/dev/null && [[ "$(DISPLAY=:0 xdotool getactivewindow getwindowname 2>/dev/null)" == QZSS* ]]; then
+  REQUIRE_KIOSK_WINDOW=1
+fi
+if journalctl -u "qzss-decoder@$(whoami).service" --since '2 minutes ago' --no-pager -o cat 2>/dev/null \
+    | grep -E '^\$QZQSM,' > /dev/null; then
+  REQUIRE_FRESH_RECEPTION=1
+fi
 update_repo "$MAP_DIR"
 map_result=$?
 case "$map_result" in

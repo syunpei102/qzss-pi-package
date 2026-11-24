@@ -981,7 +981,7 @@ if __name__ == '__main__':
                 time.sleep(1)
                 print('start!')
                 serial_ok.set()
-                last_byte_time = time.time()
+                last_byte_time = time.monotonic()
 
                 framer = StreamFramer()
                 while True:
@@ -990,12 +990,12 @@ if __name__ == '__main__':
                     # timeout=1秒まで1バイト待つ)
                     chunk = ser.read(max(1, ser.in_waiting))
                     if not chunk:
-                        if time.time() - last_byte_time > IDLE_TIMEOUT_SEC:
+                        if time.monotonic() - last_byte_time > IDLE_TIMEOUT_SEC:
                             print(f"🔴 オフライン({IDLE_TIMEOUT_SEC}秒間データを受信していません)")
                             raise serial.SerialException(
                                 f"{IDLE_TIMEOUT_SEC}秒間データを受信していません(切断の可能性)")
                         continue
-                    last_byte_time = time.time()
+                    last_byte_time = time.monotonic()
                     for kind, frame in framer.feed(chunk):
                         if kind == "ubx":
                             # チャンク内に複数フレームがある場合も，各フレームの処理開始を個別に測る．
